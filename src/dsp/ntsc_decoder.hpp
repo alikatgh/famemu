@@ -42,6 +42,7 @@ private:
     enum class State { Search, Track };
 
     void decode_lines();
+    void freerun_line(int64_t start);
     bool find_hsync_edge(double lo, double hi, double* edge_out,
                          int64_t* pulse_begin = nullptr,
                          int64_t* pulse_end = nullptr) const;
@@ -89,6 +90,7 @@ private:
     // Search state
     double search_prev_edge_ = -1.0;
     int64_t cursor_ = 0;
+    int freerun_row_ = 0;  // "snow" rows painted while unlocked
 
     // Extent of the most recently found hsync pulse (slicer-asserted range).
     int64_t pulse_begin_ = 0;

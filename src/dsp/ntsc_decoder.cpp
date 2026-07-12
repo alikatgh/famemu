@@ -108,6 +108,9 @@ void NtscDecoder::decode_lines() {
             if (!find_hsync_edge(static_cast<double>(cursor_),
                                  static_cast<double>(cursor_) + nominal_period_,
                                  &edge)) {
+                // No sync anywhere in this line's worth of samples: paint it
+                // as free-running "snow" so an unlocked signal is visible.
+                freerun_line(cursor_);
                 cursor_ += static_cast<int64_t>(nominal_period_);
                 continue;
             }
@@ -147,6 +150,36 @@ void NtscDecoder::decode_lines() {
             handle_line(edge, ok);
             stats_.lines.fetch_add(1, std::memory_order_relaxed);
         }
+    }
+}
+
+// Paint one unlocked line as grayscale snow, normalized per line so noise of
+// any level is visible. Publishes a frame every kHeight/2 rows.
+void NtscDecoder::freerun_line(int64_t start) {
+    Frame& f = tb_.back();
+    int row = freerun_row_ * 2;
+    uint32_t* out0 = f.rgba.data() + static_cast<size_t>(row) * Frame::kWidth;
+    uint32_t* out1 = out0 + Frame::kWidth;
+    int64_t n = static_cast<int64_t>(nominal_period_);
+    float lo = 1e30f, hi = -1e30f;
+    for (int64_t j = start; j < start + n; ++j) {
+        float v = comp_[static_cast<size_t>(j - base_)];
+        lo = std::min(lo, v);
+        hi = std::max(hi, v);
+    }
+    float scale = (hi > lo) ? 255.0f / (hi - lo) : 0.0f;
+    double step = static_cast<double>(n) / Frame::kWidth;
+    for (int px = 0; px < Frame::kWidth; ++px) {
+        size_t idx = static_cast<size_t>(
+            start + static_cast<int64_t>(px * step) - base_);
+        auto g = static_cast<uint32_t>((comp_[idx] - lo) * scale);
+        uint32_t px32 = 0xff000000u | (g << 16) | (g << 8) | g;
+        out0[px] = px32;
+        out1[px] = px32;
+    }
+    if (++freerun_row_ >= Frame::kHeight / 2) {
+        freerun_row_ = 0;
+        tb_.publish(++frame_seq_);
     }
 }
 
