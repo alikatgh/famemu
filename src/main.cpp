@@ -11,6 +11,7 @@
 
 #include "config.hpp"
 #include "dsp/am_detector.hpp"
+#include "dsp/fm_audio.hpp"
 #include "dsp/dc_blocker.hpp"
 #include "dsp/fir.hpp"
 #include "dsp/frame.hpp"
@@ -19,6 +20,7 @@
 #include "source/file_source.hpp"
 #include "source/hackrf_source.hpp"
 #include "source/sample_source.hpp"
+#include "ui/sdl_audio.hpp"
 #include "ui/sdl_display.hpp"
 #include "util/spectrum.hpp"
 
@@ -41,6 +43,8 @@ void usage() {
         "  --mode color|gray     decode mode (default color)\n"
         "  --detector envelope|sync  AM detector (default envelope)\n"
         "  --sat F --hue DEG     color trims\n"
+        "  --no-audio            disable FM audio output\n"
+        "  --volume F            audio volume 0..1 (default 0.7)\n"
         "  --record PATH         tee raw IQ to .cs8 while decoding\n"
         "  --dump-composite PATH write post-AGC composite as f32\n"
         "  --dump-frames PREFIX  write decoded frames as PPM (headless)\n"
@@ -84,7 +88,9 @@ bool parse_args(int argc, char** argv, Config* cfg) {
             std::string v = next("--detector");
             cfg->detector = (v == "sync") ? Config::Detector::SyncPLL
                                           : Config::Detector::Envelope;
-        } else if (a == "--sat") cfg->saturation = std::atof(next("--sat"));
+        } else if (a == "--no-audio") cfg->audio = false;
+        else if (a == "--volume") cfg->volume = std::atof(next("--volume"));
+        else if (a == "--sat") cfg->saturation = std::atof(next("--sat"));
         else if (a == "--hue") cfg->hue_deg = std::atof(next("--hue"));
         else if (a == "--record") cfg->record_path = next("--record");
         else if (a == "--dump-composite") cfg->dump_composite_path = next("--dump-composite");
@@ -120,7 +126,7 @@ std::atomic<bool> g_running{true};
 // cs8 IQ bytes -> complex -> DC block -> mix carrier to 0 Hz -> channel LPF
 // -> AM detect -> NtscDecoder.
 void dsp_thread(const Config& cfg, ISampleSource* src, NtscDecoder* dec,
-                std::FILE* record_fp) {
+                std::FILE* record_fp, FmAudioDemod* fm, SdlAudioOut* aout) {
     constexpr size_t kBlockBytes = 1 << 16;  // 32768 complex samples
     std::vector<uint8_t> raw(kBlockBytes);
     std::vector<std::complex<float>> iq(kBlockBytes / 2);
@@ -148,6 +154,12 @@ void dsp_thread(const Config& cfg, ISampleSource* src, NtscDecoder* dec,
                 static_cast<int8_t>(raw[2 * i]) / 128.0f,
                 static_cast<int8_t>(raw[2 * i + 1]) / 128.0f);
             iq[i] = dcb.process(c) * mixer.next();
+        }
+        if (fm && aout) {
+            static thread_local std::vector<float> audio;
+            audio.clear();
+            fm->process(iq.data(), ns, audio);
+            aout->push(audio.data(), audio.size());
         }
         chan_lpf.process(iq.data(), iq.data(), ns);
         if (cfg.detector == Config::Detector::SyncPLL)
@@ -228,7 +240,20 @@ int main(int argc, char** argv) {
 
     TripleBuffer tb;
     NtscDecoder dec(cfg, tb);
-    std::thread dsp(dsp_thread, std::cref(cfg), src.get(), &dec, record_fp);
+
+    // FM intercarrier audio (window mode only).
+    std::unique_ptr<FmAudioDemod> fm;
+    SdlAudioOut aout;
+    if (cfg.audio && !cfg.headless) {
+        auto demod = std::make_unique<FmAudioDemod>(cfg.sample_rate, cfg.volume);
+        if (aout.init(static_cast<int>(demod->out_rate())))
+            fm = std::move(demod);
+        else
+            std::fprintf(stderr, "audio device unavailable, continuing muted\n");
+    }
+
+    std::thread dsp(dsp_thread, std::cref(cfg), src.get(), &dec, record_fp,
+                    fm.get(), aout.ok() ? &aout : nullptr);
 
     int rc = 0;
     if (cfg.headless) {
@@ -271,9 +296,10 @@ int main(int argc, char** argv) {
         bool have_shown = false;
         uint64_t prev_frames = 0;
         auto last_frame_inc = std::chrono::steady_clock::now();
+        // Nearest VHF channel (real modulators drift a few hundred kHz).
         int channel = 0;
-        if (cfg.video_carrier_hz == 91.25e6) channel = 1;
-        else if (cfg.video_carrier_hz == 97.25e6) channel = 2;
+        if (std::abs(cfg.video_carrier_hz - 91.25e6) < 3e6) channel = 1;
+        else if (std::abs(cfg.video_carrier_hz - 97.25e6) < 3e6) channel = 2;
         while (g_running.load(std::memory_order_relaxed)) {
             KeyAction act = disp.poll();
             if (act == KeyAction::Quit) break;
@@ -314,6 +340,7 @@ int main(int argc, char** argv) {
             }
             st.vsync_locked = (now - last_frame_inc) < std::chrono::milliseconds(500);
             st.freq_mhz = cfg.video_carrier_hz / 1e6;
+            st.audio_mhz = (cfg.video_carrier_hz + 4.5e6) / 1e6;
             st.channel = channel;
             disp.render(f, st);
         }

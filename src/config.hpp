@@ -35,6 +35,10 @@ struct Config {
     float saturation = 1.0f;
     float hue_deg = 0.0f;
 
+    // FM intercarrier audio (video +4.5 MHz)
+    bool audio = true;
+    float volume = 0.7f;
+
     double center_hz() const { return video_carrier_hz + offset_hz; }
 };
 

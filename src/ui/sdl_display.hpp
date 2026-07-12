@@ -18,7 +18,8 @@ struct OsdStats {
     uint64_t frames = 0;
     int lna = 0, vga = 0;
     double freq_mhz = 0.0;      // video carrier
-    int channel = 0;            // 1/2 for VHF presets, 0 = custom freq
+    double audio_mhz = 0.0;     // FM audio carrier (video +4.5 MHz)
+    int channel = 0;            // 1/2 (nearest VHF channel), 0 = unknown
 };
 
 // Key actions the main loop should react to.

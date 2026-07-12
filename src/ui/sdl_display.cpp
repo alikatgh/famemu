@@ -63,16 +63,16 @@ constexpr int kFontScale = 2;
 constexpr int kCharW = 6 * kFontScale;  // 5 px glyph + 1 px spacing
 
 void draw_text(SDL_Renderer* ren, int x, int y, const std::string& text,
-               uint8_t r, uint8_t g, uint8_t b) {
+               uint8_t r, uint8_t g, uint8_t b, int scale = kFontScale) {
     SDL_SetRenderDrawColor(ren, r, g, b, 255);
     for (size_t ci = 0; ci < text.size(); ++ci) {
         const uint8_t* gl = glyph5x7(text[ci]);
         for (int row = 0; row < 7; ++row)
             for (int col = 0; col < 5; ++col)
                 if (gl[row] & (0x10 >> col)) {
-                    SDL_Rect px{x + static_cast<int>(ci) * kCharW +
-                                    col * kFontScale,
-                                y + row * kFontScale, kFontScale, kFontScale};
+                    SDL_Rect px{x + static_cast<int>(ci) * 6 * scale +
+                                    col * scale,
+                                y + row * scale, scale, scale};
                     SDL_RenderFillRect(ren, &px);
                 }
     }
@@ -144,40 +144,24 @@ void SdlDisplay::render(const Frame* frame, const OsdStats& stats) {
     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
     SDL_RenderClear(ren_);
     SDL_RenderCopy(ren_, tex_, nullptr, nullptr);
-    // Minimal OSD: lock indicator (green/red square) and ring-fill bar.
-    SDL_Rect lock{8, 8, 12, 12};
-    if (stats.line_locked)
-        SDL_SetRenderDrawColor(ren_, 0, 220, 0, 255);
-    else
-        SDL_SetRenderDrawColor(ren_, 220, 0, 0, 255);
-    SDL_RenderFillRect(ren_, &lock);
-    SDL_Rect burst{24, 8, 12, 12};
-    if (stats.burst_amp >= 3.0f)
-        SDL_SetRenderDrawColor(ren_, 0, 220, 0, 255);
-    else
-        SDL_SetRenderDrawColor(ren_, 180, 180, 0, 255);
-    SDL_RenderFillRect(ren_, &burst);
-    SDL_Rect fill_bg{8, 26, 100, 6};
-    SDL_SetRenderDrawColor(ren_, 60, 60, 60, 255);
-    SDL_RenderFillRect(ren_, &fill_bg);
-    SDL_Rect fill{8, 26, static_cast<int>(stats.ring_fill * 100.0f), 6};
-    SDL_SetRenderDrawColor(ren_, 0, 160, 220, 255);
-    SDL_RenderFillRect(ren_, &fill);
-    // Top-right status text (yellow).
-    char line[80];
-    if (stats.channel > 0)
-        std::snprintf(line, sizeof(line),
-                      "V-SYNC:%s H-SYNC:%s VHF:%.2fMHz %dCH",
-                      stats.vsync_locked ? "OK" : "--",
-                      stats.line_locked ? "OK" : "--", stats.freq_mhz,
-                      stats.channel);
-    else
-        std::snprintf(line, sizeof(line), "V-SYNC:%s H-SYNC:%s VHF:%.2fMHz",
-                      stats.vsync_locked ? "OK" : "--",
-                      stats.line_locked ? "OK" : "--", stats.freq_mhz);
-    std::string text(line);
-    int tx = Frame::kWidth - static_cast<int>(text.size()) * kCharW - 8;
-    draw_text(ren_, tx, 8, text, 255, 220, 0);
+    // Big retro-TV channel number, top left (green).
+    if (stats.channel > 0) {
+        char ch[8];
+        std::snprintf(ch, sizeof(ch), "CH%d", stats.channel);
+        draw_text(ren_, 20, 16, ch, 40, 255, 80, 6);
+    }
+    // Status text, top right (yellow), two lines.
+    char l1[48], l2[48];
+    std::snprintf(l1, sizeof(l1), "V-SYNC:%s H-SYNC:%s",
+                  stats.vsync_locked ? "OK" : "--",
+                  stats.line_locked ? "OK" : "--");
+    std::snprintf(l2, sizeof(l2), "VHF:%.2fMHz AUD:%.2fMHz", stats.freq_mhz,
+                  stats.audio_mhz);
+    std::string t1(l1), t2(l2);
+    draw_text(ren_, Frame::kWidth - static_cast<int>(t1.size()) * kCharW - 8,
+              8, t1, 255, 220, 0);
+    draw_text(ren_, Frame::kWidth - static_cast<int>(t2.size()) * kCharW - 8,
+              8 + 8 * kFontScale, t2, 255, 220, 0);
     SDL_RenderPresent(ren_);
 }
 
