@@ -1,5 +1,6 @@
 build/
 build-*/
+build_tools/
 *.cs8
 *.ppm
 *.bmp
