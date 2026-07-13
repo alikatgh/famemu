@@ -71,6 +71,7 @@ add_test(NAME synth_ntsc COMMAND synth_ntsc)
 
 # --- Clean-room engines (no external deps; see docs/PLATFORM.md) ---
 add_library(famemu_nes STATIC
+    engines/nes/apu.cpp
     engines/nes/cpu.cpp engines/nes/ppu.cpp engines/nes/famemu_nes_core.cpp)
 target_include_directories(famemu_nes PUBLIC engines engines/include)
 
@@ -87,6 +88,13 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.nes")
         "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.nes"
         "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.log")
 endif()
+# blargg $6000-protocol test ROMs (exit code = ROM's own verdict).
+foreach(_rom ppu_vbl_basics apu_1-len_ctr apu_2-len_table apu_3-irq_flag apu_4-jitter)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/${_rom}.nes")
+        add_test(NAME ${_rom} COMMAND blargg_harness
+            "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/${_rom}.nes" 2400)
+    endif()
+endforeach()
 
 # --- Loopback demo: synthetic frames -> RF decoder -> BMP (DSP only) ---
 add_executable(famitv_loopback tools/famitv_loopback.cpp)

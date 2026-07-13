@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "apu.hpp"
 #include "cart.hpp"
 #include "cpu.hpp"
 #include "ppu.hpp"
@@ -16,7 +17,13 @@ namespace famemu::nes {
 
 class NesSystem : public Bus {
 public:
-    NesSystem() : ppu_(cart_), cpu_(*this) {}
+    NesSystem() : ppu_(cart_), cpu_(*this) {
+        apu_.set_dmc_reader(
+            [](void* ctx, uint16_t a) {
+                return static_cast<NesSystem*>(ctx)->read(a);
+            },
+            this);
+    }
 
     bool load_rom(const uint8_t* data, size_t len) {
         if (!cart_.load(data, len)) return false;
@@ -30,6 +37,7 @@ public:
         pad_state_[0] = pad_state_[1] = 0;
         pad_shift_[0] = pad_shift_[1] = 0;
         strobe_ = false;
+        apu_.reset();
         ppu_.reset();
         cpu_.reset();
     }
@@ -47,14 +55,16 @@ public:
     const uint8_t* framebuffer() const { return ppu_.framebuffer(); }  // 256x240 indices
     Ppu& ppu() { return ppu_; }
     Cpu6502& cpu() { return cpu_; }
+    Apu& apu() { return apu_; }
 
     // ---- Bus ----------------------------------------------------------
     uint8_t read(uint16_t a) override {
         if (a < 0x2000) return ram_[a & 0x7FF];
         if (a < 0x4000) return ppu_.read_reg(a);
+        if (a == 0x4015) return apu_.read_status();
         if (a == 0x4016) return read_pad(0);
         if (a == 0x4017) return read_pad(1);
-        if (a < 0x4020) return 0;  // APU/IO (APU is the next gate)
+        if (a < 0x4020) return 0;
         if (a >= 0x8000) return cart_.cpu_read(a);
         if (a >= 0x6000) return sram_[a - 0x6000];
         return 0;
@@ -74,7 +84,7 @@ public:
                 pad_shift_[1] = pad_state_[1];
             }
         } else if (a < 0x4020) {
-            // APU registers: accepted, sound comes with the APU gate.
+            apu_.write(a, v);  // $4000-$4013, $4015, $4017
         } else if (a >= 0x8000) {
             cart_.cpu_write(a, v);
         } else if (a >= 0x6000) {
@@ -86,6 +96,7 @@ private:
     Cart cart_;
     Ppu ppu_;
     Cpu6502 cpu_;
+    Apu apu_;
     uint8_t ram_[0x800];
     uint8_t sram_[0x2000];
     uint8_t pad_state_[2], pad_shift_[2];
@@ -94,16 +105,18 @@ private:
     void step_instruction() {
         const uint64_t before = cpu_.cyc;
         cpu_.step();
-        tick_ppu(cpu_.cyc - before);
+        tick_hw(cpu_.cyc - before);
         if (ppu_.take_nmi()) {
             const uint64_t b2 = cpu_.cyc;
             cpu_.nmi();
-            tick_ppu(cpu_.cyc - b2);
+            tick_hw(cpu_.cyc - b2);
         }
+        if (apu_.irq_pending()) cpu_.irq();  // masked by I flag inside
     }
 
-    void tick_ppu(uint64_t cpu_cycles) {
+    void tick_hw(uint64_t cpu_cycles) {
         for (uint64_t i = 0; i < cpu_cycles * 3; ++i) ppu_.tick();
+        apu_.tick(static_cast<int>(cpu_cycles));
     }
 
     void oam_dma(uint8_t page) {
@@ -112,7 +125,7 @@ private:
         // 513 CPU cycles (+1 on odd cycle); the PPU keeps running underneath.
         const uint64_t stall = 513 + (cpu_.cyc & 1);
         cpu_.cyc += stall;
-        tick_ppu(stall);
+        tick_hw(stall);
     }
 
     uint8_t read_pad(int port) {

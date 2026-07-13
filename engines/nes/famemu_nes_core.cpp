@@ -39,8 +39,10 @@ const uint8_t* nes_video_rgb(int* w, int* h) {
     return g_rgb;
 }
 
-size_t nes_audio_read(int16_t*, size_t) { return 0; }  // APU is the next gate
-int nes_sample_rate(void) { return 48000; }
+size_t nes_audio_read(int16_t* out, size_t max_frames) {
+    return g_sys ? g_sys->apu().read_samples(out, max_frames) : 0;
+}
+int nes_sample_rate(void) { return famemu::nes::Apu::kSampleRate; }
 
 void nes_set_input(int port, uint32_t buttons) {
     // FamemuButton bit order matches the NES controller shift order (A first).
