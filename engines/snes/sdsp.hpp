@@ -30,6 +30,12 @@ public:
 
     void render(int samples);  // generate into the ring buffer
 
+    template <class S>
+    void serialize(S& s) {
+        s.io(regs_); s.io(voices_); s.io(echo_pos_); s.io(fir_ring_); s.io(fir_idx_);
+    }
+    void post_load() { rd_ = wr_ = 0; }
+
     size_t read_samples(int16_t* out, size_t max_frames) {
         size_t n = 0;
         while (n < max_frames && rd_ != wr_) {

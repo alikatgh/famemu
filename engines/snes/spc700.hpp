@@ -53,10 +53,19 @@ public:
         for (int budget = cycles; budget > 0; budget -= 2) step();
     }
 
-    // registers (public for save states later)
+    // registers (public for save states)
     uint8_t a, x, y, psw, sp;
     uint16_t pc;
     bool running;
+
+    template <class S>
+    void serialize(S& s) {
+        s.io(aram);
+        s.io(a); s.io(x); s.io(y); s.io(psw); s.io(sp); s.io(pc); s.io(running);
+        s.io(ports_in); s.io(ports_out);
+        s.io(timer_target); s.io(timer_counter); s.io(timer_stage);
+        s.io(timer_enable); s.io(dsp_addr); s.io(stage_acc);
+    }
 
 private:
     static constexpr uint8_t C = 0x01, Z = 0x02, N = 0x80;

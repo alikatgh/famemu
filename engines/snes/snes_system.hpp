@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "cpu65816.hpp"
+#include "nes/state.hpp"
 #include "sdsp.hpp"
 #include "spc700.hpp"
 #include "sppu.hpp"
@@ -89,6 +90,29 @@ public:
     Cpu65816& cpu() { return cpu_; }
     SPpu& ppu() { return ppu_; }
     uint8_t wram_byte(uint32_t i) const { return wram_[i & 0x1FFFF]; }  // debug
+
+    // ---- save states (same writer/reader as the NES engine) -------------
+    static constexpr uint32_t kStateMagic = 0x46534E31;  // "FSN1"
+
+    size_t state_size() const {
+        return 8 + 64 + sizeof wram_ + sizeof sram_ + sizeof dma_ + 64 +
+               (sizeof(SPpu)) + (sizeof(Spc700)) + (sizeof(SDsp)) + 256;
+    }
+    bool state_save(uint8_t* buf, size_t len) {
+        famemu::nes::StateWriter w{buf, len};
+        w.io(kStateMagic);
+        serialize_all(w);
+        return w.ok;
+    }
+    bool state_load(const uint8_t* buf, size_t len) {
+        famemu::nes::StateReader r{buf, len};
+        uint32_t magic = 0;
+        r.io(magic);
+        if (magic != kStateMagic) return false;
+        serialize_all(r);
+        if (r.ok) dsp_.post_load();
+        return r.ok;
+    }
     uint8_t spc_song() const { return spc_.is_running() ? spc_dbg_port0_ : 0xFF; }  // debug
 
     // ---- Bus16 -----------------------------------------------------------
@@ -265,6 +289,21 @@ private:
         }
     }
     void wr_cpu(uint32_t a, uint8_t v) { write(a, v); }
+
+    template <class S>
+    void serialize_all(S& s) {
+        s.io(cpu_.a); s.io(cpu_.x); s.io(cpu_.y); s.io(cpu_.s); s.io(cpu_.d);
+        s.io(cpu_.dbr); s.io(cpu_.pbr); s.io(cpu_.pc); s.io(cpu_.p);
+        s.io(cpu_.e); s.io(cpu_.cyc); s.io(cpu_.waiting); s.io(cpu_.stopped);
+        s.io(wram_); s.io(sram_); s.io(dma_);
+        s.io(nmitimen_); s.io(rdnmi_); s.io(in_vblank_); s.io(joy1_);
+        s.io(buttons_); s.io(line_);
+        s.io(ipl_transfer_); s.io(ipl_addr_); s.io(ipl_last_index_);
+        s.io(ipl_ports_); s.io(sample_acc_);
+        ppu_.serialize(s);
+        spc_.serialize(s);
+        dsp_.serialize(s);
+    }
 };
 
 }  // namespace famemu::snes

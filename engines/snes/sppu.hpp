@@ -41,6 +41,17 @@ public:
     void render_line(int y);                 // y in [0, 223]
     const uint8_t* framebuffer() const { return fb_; }  // RGB888
 
+    template <class S>
+    void serialize(S& s) {
+        s.io(vram_); s.io(cgram_); s.io(oam_); s.io(fb_);
+        s.io(inidisp_); s.io(obsel_); s.io(bgmode_); s.io(tm_); s.io(cgadsub_);
+        s.io(coldata_r_); s.io(coldata_g_); s.io(coldata_b_);
+        s.io(bg1sc_); s.io(bg3sc_); s.io(bg12nba_); s.io(bg34nba_);
+        s.io(bg1hofs_); s.io(bg1vofs_); s.io(bg3hofs_); s.io(bg3vofs_);
+        s.io(scroll_latch_); s.io(vmain_); s.io(vmadd_); s.io(oamadd_);
+        s.io(cgadd_); s.io(cg_latch_); s.io(cg_low_);
+    }
+
 private:
     uint8_t vram_[0x10000];      // 64 KB (word-addressed as 32K words)
     uint8_t cgram_[512];         // 256 x BGR555

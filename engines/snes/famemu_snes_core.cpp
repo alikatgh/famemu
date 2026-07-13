@@ -37,9 +37,13 @@ void snes_set_input(int port, uint32_t buttons) {
     if (g_sys && port == 0) g_sys->set_buttons(buttons);
 }
 
-size_t snes_state_size(void) { return 0; }   // after the fidelity pass
-int snes_state_save(uint8_t*, size_t) { return 0; }
-int snes_state_load(const uint8_t*, size_t) { return 0; }
+size_t snes_state_size(void) { return g_sys ? g_sys->state_size() : 0; }
+int snes_state_save(uint8_t* buf, size_t len) {
+    return (g_sys && g_sys->state_save(buf, len)) ? 1 : 0;
+}
+int snes_state_load(const uint8_t* buf, size_t len) {
+    return (g_sys && g_sys->state_load(buf, len)) ? 1 : 0;
+}
 
 const FamemuCoreAPI kSnesApi = {
     "snes",
