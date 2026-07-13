@@ -3,6 +3,31 @@
 _Autonomous overnight session. This file is the persistent state across
 context compactions AND the morning report. Update at every milestone._
 
+## ☀️ MORNING SUMMARY (read this first)
+
+**The NES path is App-Store-ready.** The clean-room NES core passes every
+gate — nestest 8991/8991, instr_test-v5 16/16, all 8 sprite-hit, 4/4 APU,
+vbl basics, **100.0000% pixel parity with Nestopia on Rocket Rush** (996
+scripted frames into gameplay), music verified, mappers 0-4, KORA NES proto
+boots, save states bit-identical. famemu.app builds with this core statically
+("builtin:nes" default; GPL Nestopia now dev-only via FAMEMU_USE_NESTOPIA=1);
+famemu-appstore.entitlements written (sandbox — the dlopen blocker is gone).
+ctest: 9/9.
+
+**The SNES engine exists and runs KORA's opening.** Complete 65816 (all 256
+opcodes), Mode-1 S-PPU, LoROM bus, DMA, IPL-handshake APU stub: the KORA
+title renders near-identical to the snes9x reference, START advances to the
+prologue. Not yet: SPC700/DSP audio (silent), Mode 7, HDMA, full-game verify.
+
+**Found & fixed in shipped code:** famitv_play + famemu engine.cpp input was
+silently dead with Nestopia (port-connect quirk) — fixed in both loaders.
+
+**Your decisions needed:** (1) famemu/ (Swift app) is still unversioned —
+put it in the famemu GitHub repo? (2) DMG signing cert still absent
+(DISTRIBUTION.md); (3) App Store Connect listing when you're ready.
+
+Every milestone is committed and pushed to github.com/alikatgh/famemu.
+
 ## Mission (user, before sleep)
 Work all night toward: clean-room engines (NES first, SNES next) and a
 famemu.app ready for Mac App Store submission (GPL-free, sandboxable).
