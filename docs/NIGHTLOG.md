@@ -48,9 +48,17 @@ Priority: (1) NES gate 5 parity → (2) APU → (3) mappers+KORA proto →
 - [x] **famemu-appstore.entitlements written** (app-sandbox + network.client
   + user-selected-files + bookmarks); DISTRIBUTION.md checklist updated —
   the GPL/dlopen blockers for MAS are now REMOVED for the NES path.
-- [ ] Mappers 1/2/3/4 (+ MMC3 A12 IRQ) → KORA NES proto (gate 6) ← NEXT
-- [ ] Save states (store titles need suspend/resume)
-- [ ] SNES: 65816 core start (LoROM, kora.sfc as target)
+- [x] **Mappers 0/1/2/3/4 done** (MMC1 serial/modes, UNROM, CNROM, MMC3 with
+  scanline IRQ at dot 260). Gate 2: instr_test-v5 official 16/16 (on MMC1).
+  Gate 6: **KORA NES proto (MMC3) boots and renders.** Parity re-verified
+  100.0000% after the cart refactor. (UNROM/CNROM paths untested for lack of
+  test ROMs — trivial code, flagged.)
+- [x] **Save states**: full-system snapshot (state.hpp), FamemuCoreAPI
+  state_* real, round-trip replay bit-identical (state_test, ctest 9/9).
+- [ ] SNES: 65816 core start (LoROM, kora.sfc as target) ← IN PROGRESS
+      engines/snes/ — CPU first (65816 E/M/X modes), then LoROM bus, PPU
+      Mode 1, SPC700. Gate: KORA title renders; kora/snes/verify.sh dumps
+      become golden tests.
 - NOTE for the user: famemu/ (the Swift app) is still NOT a git repo — its
   changes (engine.cpp builtin backend, Model.swift default, entitlements)
   live only on disk. Decide where it should live (inside the famemu GitHub

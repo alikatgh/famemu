@@ -75,6 +75,9 @@ add_library(famemu_nes STATIC
     engines/nes/cpu.cpp engines/nes/ppu.cpp engines/nes/famemu_nes_core.cpp)
 target_include_directories(famemu_nes PUBLIC engines engines/include)
 
+add_library(famemu_snes STATIC engines/snes/cpu65816.cpp)
+target_include_directories(famemu_snes PUBLIC engines engines/include)
+
 add_executable(nestest_harness engines/nes/tests/nestest_main.cpp)
 target_link_libraries(nestest_harness PRIVATE famemu_nes)
 
