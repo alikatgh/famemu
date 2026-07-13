@@ -2,6 +2,14 @@
 
 [日本語 README はこちら](README.ja.md)
 
+> **This repo (famemu / famitv)** extends
+> [GOROman's `famicom-rf-hackrf-decoder`](https://github.com/GOROman/famicom-rf-hackrf-decoder)
+> (MIT): beyond decoding a real Famicom's RF, it re-encodes *emulated* NES frames
+> back into an NTSC-J signal and plays them through this same analog chain for a
+> real-analog-TV look (`tools/famitv_play`, `scripts/famitv.sh`). The original RF
+> decoder is © GOROman (see `LICENSE`, retained unchanged); the famitv/famemu
+> additions are contributed under the same MIT terms.
+
 A software decoder that receives the Famicom's VHF RF output (NTSC-J) with a
 HackRF One and displays it on your PC in real time — full NTSC color decoding
 plus FM intercarrier audio. C++20 + libhackrf + SDL2. No GNU Radio required.
