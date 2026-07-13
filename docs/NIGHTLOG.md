@@ -32,6 +32,17 @@ timing), Gaussian interp, Mode 7, HDMA, SNES save states.
 **Found & fixed in shipped code:** famitv_play + famemu engine.cpp input was
 silently dead with Nestopia (port-connect quirk) — fixed in both loaders.
 
+**Extended session (+4h) additions:** real SPC700+S-DSP (KORA's music plays;
+dynamic score verified: Y → watch memory → song 0→1); famemu.app fully
+GPL-free (builtin:snes joins builtin:nes); scene sweep vs snes9x all matching
+(title attract pan tracked frame-by-frame, walk-memories, journal); SNES
+save states bit-identical (576KB snapshots); SNES smoke+state tests in ctest
+(local gitignored ROM); NES NMI edge delivered one-instruction-late per
+hardware (blargg 04 passes; vbl 03+09 added). **ctest: 14/14.** Documented
+gap: vbl 02/05-08/10 need per-cycle CPU microcode (attempt made, reverted —
+it traded failures and risked the 100.0000% game parity, which was
+re-verified after every change).
+
 **Your decisions needed:** (1) famemu/ (Swift app) is still unversioned —
 put it in the famemu GitHub repo? (2) DMG signing cert still absent
 (DISTRIBUTION.md); (3) App Store Connect listing when you're ready.
