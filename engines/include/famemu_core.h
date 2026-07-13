@@ -65,7 +65,7 @@ typedef struct FamemuCoreAPI {
 
 /* Each engine exports one accessor: */
 const FamemuCoreAPI* famemu_nes_core(void);
-/* const FamemuCoreAPI* famemu_snes_core(void);  (engine 2) */
+const FamemuCoreAPI* famemu_snes_core(void);
 
 #ifdef __cplusplus
 }

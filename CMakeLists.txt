@@ -76,6 +76,7 @@ add_library(famemu_nes STATIC
 target_include_directories(famemu_nes PUBLIC engines engines/include)
 
 add_library(famemu_snes STATIC engines/snes/cpu65816.cpp engines/snes/sppu.cpp
+    engines/snes/famemu_snes_core.cpp
     engines/snes/spc700.cpp engines/snes/sdsp.cpp)
 target_include_directories(famemu_snes PUBLIC engines engines/include)
 
