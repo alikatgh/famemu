@@ -95,6 +95,10 @@ foreach(_rom ppu_vbl_basics apu_1-len_ctr apu_2-len_table apu_3-irq_flag apu_4-j
             "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/${_rom}.nes" 2400)
     endif()
 endforeach()
+if(EXISTS "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/instr_test_official.nes")
+    add_test(NAME instr_test_official COMMAND blargg_harness
+        "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/instr_test_official.nes" 14400)
+endif()
 
 # --- Loopback demo: synthetic frames -> RF decoder -> BMP (DSP only) ---
 add_executable(famitv_loopback tools/famitv_loopback.cpp)

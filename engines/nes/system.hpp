@@ -111,7 +111,7 @@ private:
             cpu_.nmi();
             tick_hw(cpu_.cyc - b2);
         }
-        if (apu_.irq_pending()) cpu_.irq();  // masked by I flag inside
+        if (apu_.irq_pending() || cart_.irq_pending()) cpu_.irq();  // I-masked
     }
 
     void tick_hw(uint64_t cpu_cycles) {

@@ -11,6 +11,8 @@ uint16_t Ppu::mirror_nt(uint16_t addr) const {
         case Mirroring::Vertical:   return addr & 0x07FF;
         case Mirroring::Horizontal: return static_cast<uint16_t>(((addr >> 1) & 0x0400) | (addr & 0x03FF));
         case Mirroring::FourScreen: return addr & 0x07FF;  // (extra VRAM not modeled)
+        case Mirroring::SingleLow:  return addr & 0x03FF;
+        case Mirroring::SingleHigh: return static_cast<uint16_t>(0x0400 | (addr & 0x03FF));
     }
     return addr & 0x07FF;
 }
@@ -294,6 +296,9 @@ void Ppu::tick() {
                 evaluate_sprites(scanline_ == 261 ? 0 : scanline_ + 1);
             }
             if (scanline_ == 261 && dot_ >= 280 && dot_ <= 304) copy_y();
+            // MMC3 scanline counter: clocked by the PPU A12 rise during the
+            // sprite-fetch window; dot 260 is the standard approximation.
+            if (dot_ == 260) cart_.ppu_scanline();
         } else if (scanline_ != 261 && dot_ >= 1 && dot_ <= 256) {
             // Forced blank: backdrop color.
             fb_[scanline_ * kWidth + (dot_ - 1)] = palette_[0] & 0x3F;
