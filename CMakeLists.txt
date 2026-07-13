@@ -117,7 +117,10 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.nes")
         "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.log")
 endif()
 # blargg $6000-protocol test ROMs (exit code = ROM's own verdict).
-foreach(_rom ppu_vbl_basics apu_1-len_ctr apu_2-len_table apu_3-irq_flag apu_4-jitter)
+# (vbl 02/05/06/07/08/10 need per-cycle CPU microcode — documented gap.)
+foreach(_rom ppu_vbl_basics vbl_03-vbl_clear_time vbl_04-nmi_control
+        vbl_09-even_odd_frames
+        apu_1-len_ctr apu_2-len_table apu_3-irq_flag apu_4-jitter)
     if(EXISTS "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/${_rom}.nes")
         add_test(NAME ${_rom} COMMAND blargg_harness
             "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/${_rom}.nes" 2400)

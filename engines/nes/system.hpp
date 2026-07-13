@@ -87,6 +87,11 @@ public:
     }
 
     // ---- Bus ----------------------------------------------------------
+    // NOTE on timing model: the PPU catches up AFTER each instruction
+    // (instruction-granular). Sub-instruction $2002/$2000 dot alignment
+    // (blargg ppu_vbl_nmi 02/05-08/10) needs per-cycle microcode — tried a
+    // tick-per-bus-access model overnight; it traded failures rather than
+    // fixing them and risked the 100% game parity, so it was reverted.
     uint8_t read(uint16_t a) override {
         if (a < 0x2000) return ram_[a & 0x7FF];
         if (a < 0x4000) return ppu_.read_reg(a);
@@ -130,16 +135,21 @@ private:
     uint8_t sram_[0x2000];
     uint8_t pad_state_[2], pad_shift_[2];
     bool strobe_ = false;
+    bool nmi_pending_ = false;
 
     void step_instruction() {
         const uint64_t before = cpu_.cyc;
         cpu_.step();
         tick_hw(cpu_.cyc - before);
-        if (ppu_.take_nmi()) {
+        // NMI: delivered after the instruction FOLLOWING the one during
+        // which the edge occurred (blargg 04-nmi_control).
+        if (nmi_pending_) {
+            nmi_pending_ = false;
             const uint64_t b2 = cpu_.cyc;
             cpu_.nmi();
             tick_hw(cpu_.cyc - b2);
         }
+        if (ppu_.take_nmi()) nmi_pending_ = true;
         if (apu_.irq_pending() || cart_.irq_pending()) cpu_.irq();  // I-masked
     }
 
@@ -171,7 +181,7 @@ private:
         s.io(cpu_.pc); s.io(cpu_.a); s.io(cpu_.x); s.io(cpu_.y);
         s.io(cpu_.s); s.io(cpu_.p); s.io(cpu_.cyc);
         s.io(ram_); s.io(sram_);
-        s.io(pad_state_); s.io(pad_shift_); s.io(strobe_);
+        s.io(pad_state_); s.io(pad_shift_); s.io(strobe_); s.io(nmi_pending_);
         ppu_.serialize(s);
         apu_.serialize(s);
         cart_.serialize(s);
