@@ -17,21 +17,22 @@
 extern "C" {
 #endif
 
-/* Shared button bitmask, one uint32 per port. */
-enum FamemuButton {
-    FAMEMU_BTN_A      = 1u << 0,
-    FAMEMU_BTN_B      = 1u << 1,
-    FAMEMU_BTN_SELECT = 1u << 2,
-    FAMEMU_BTN_START  = 1u << 3,
-    FAMEMU_BTN_UP     = 1u << 4,
-    FAMEMU_BTN_DOWN   = 1u << 5,
-    FAMEMU_BTN_LEFT   = 1u << 6,
-    FAMEMU_BTN_RIGHT  = 1u << 7,
+/* Shared button bitmask, one uint32 per port. (Prefixed FAMEMU_CORE_ so this
+ * header can coexist with famemu_engine.h's libretro-position FAMEMU_BTN_*.) */
+enum FamemuCoreButton {
+    FAMEMU_CORE_BTN_A      = 1u << 0,
+    FAMEMU_CORE_BTN_B      = 1u << 1,
+    FAMEMU_CORE_BTN_SELECT = 1u << 2,
+    FAMEMU_CORE_BTN_START  = 1u << 3,
+    FAMEMU_CORE_BTN_UP     = 1u << 4,
+    FAMEMU_CORE_BTN_DOWN   = 1u << 5,
+    FAMEMU_CORE_BTN_LEFT   = 1u << 6,
+    FAMEMU_CORE_BTN_RIGHT  = 1u << 7,
     /* SNES extends: */
-    FAMEMU_BTN_X      = 1u << 8,
-    FAMEMU_BTN_Y      = 1u << 9,
-    FAMEMU_BTN_L      = 1u << 10,
-    FAMEMU_BTN_R      = 1u << 11,
+    FAMEMU_CORE_BTN_X      = 1u << 8,
+    FAMEMU_CORE_BTN_Y      = 1u << 9,
+    FAMEMU_CORE_BTN_L      = 1u << 10,
+    FAMEMU_CORE_BTN_R      = 1u << 11,
 };
 
 typedef struct FamemuCoreAPI {
