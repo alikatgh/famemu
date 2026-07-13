@@ -6,9 +6,10 @@
 // NMI + auto-joypad at line 225. KORA's loop syncs on NMI, so frame-level
 // behavior is right even though per-instruction timing is approximate.
 //
-// The SPC700 is NOT emulated yet: $2140-43 implement the IPL ROM's handshake
-// protocol (ready $AA/$BB, then echo) so KORA's spc_upload completes and the
-// game proceeds — silently. Real SPC700+DSP is a later gate.
+// Audio: $2140-43 implement the IPL ROM's transfer protocol on the main-CPU
+// side, capturing the uploaded driver into real ARAM; the kickoff starts a
+// real SPC700 (driver-scoped core, spc700.hpp) driving a real S-DSP (BRR
+// voices + ADSR + echo, sdsp.hpp) at 32 kHz.
 #pragma once
 
 #include <cstdint>
@@ -16,6 +17,8 @@
 #include <vector>
 
 #include "cpu65816.hpp"
+#include "sdsp.hpp"
+#include "spc700.hpp"
 #include "sppu.hpp"
 
 namespace famemu::snes {
@@ -42,8 +45,14 @@ public:
         in_vblank_ = false;
         joy1_ = 0;
         buttons_ = 0;
-        apu_boot_ = true;
-        apu_out_[0] = 0xAA; apu_out_[1] = 0xBB; apu_out_[2] = apu_out_[3] = 0;
+        spc_.reset();
+        dsp_.reset();
+        spc_.set_dsp(&dsp_);
+        ipl_transfer_ = false;
+        ipl_addr_ = 0;
+        ipl_last_index_ = 0xFF;
+        ipl_ports_[0] = ipl_ports_[1] = ipl_ports_[2] = ipl_ports_[3] = 0;
+        sample_acc_ = 0.0;
         line_ = 0;
         cpu_.reset();
     }
@@ -62,14 +71,25 @@ public:
                 in_vblank_ = false;
             }
             while (cpu_.cyc < budget && !cpu_.stopped) cpu_.step();
+            spc_.run(65);  // ~1.024 MHz / 15734 lines
             if (line_ < SPpu::kHeight) ppu_.render_line(line_);
         }
+        // 32 kHz DSP output: 32000 / 60.0988 fps ≈ 532.5 samples per frame.
+        sample_acc_ += 32000.0 / 60.0988;
+        const int n = static_cast<int>(sample_acc_);
+        sample_acc_ -= n;
+        dsp_.render(n);
+    }
+
+    size_t read_audio(int16_t* out, size_t max_frames) {
+        return dsp_.read_samples(out, max_frames);
     }
 
     const uint8_t* framebuffer() const { return ppu_.framebuffer(); }
     Cpu65816& cpu() { return cpu_; }
     SPpu& ppu() { return ppu_; }
     uint8_t wram_byte(uint32_t i) const { return wram_[i & 0x1FFFF]; }  // debug
+    uint8_t spc_song() const { return spc_.is_running() ? spc_dbg_port0_ : 0xFF; }  // debug
 
     // ---- Bus16 -----------------------------------------------------------
     uint8_t read(uint32_t a24) override {
@@ -128,9 +148,15 @@ private:
     uint32_t buttons_ = 0;
     int line_ = 0;
 
-    // APU ports: IPL handshake stub (see file header).
-    bool apu_boot_ = true;
-    uint8_t apu_out_[4] = {0xAA, 0xBB, 0, 0};
+    // Audio subsystem + IPL transfer capture (see file header).
+    Spc700 spc_;
+    SDsp dsp_{spc_.aram};
+    bool ipl_transfer_ = false;
+    uint16_t ipl_addr_ = 0;
+    uint8_t ipl_last_index_ = 0xFF;
+    uint8_t ipl_ports_[4] = {0, 0, 0, 0};  // last main-CPU writes to $2140-43
+    double sample_acc_ = 0.0;
+    uint8_t spc_dbg_port0_ = 0;
 
     uint8_t rom_at(uint8_t bank7f, uint16_t off) const {
         const size_t i = static_cast<size_t>(bank7f) * 0x8000 + (off - 0x8000);
@@ -156,12 +182,47 @@ private:
         joy1_ = j;
     }
 
-    uint8_t apu_read(int port) { return apu_out_[port]; }
+    uint8_t apu_read(int port) {
+        if (spc_.is_running()) return spc_.main_read_port(port);
+        // IPL ROM boot state / transfer echo.
+        if (!ipl_transfer_) return port == 0 ? 0xAA : (port == 1 ? 0xBB : 0);
+        return ipl_ports_[port];  // echoes written below
+    }
+
     void apu_write(int port, uint8_t v) {
-        // IPL protocol: the driver upload waits for the SPC to echo port 0
-        // (and $CC on kickoff). Echoing everything satisfies every wait.
-        if (port == 0) apu_out_[0] = v;
-        else apu_out_[port] = v;
+        if (spc_.is_running()) {
+            if (port == 0) spc_dbg_port0_ = v;
+            spc_.main_write_port(port, v);
+            return;
+        }
+        const uint8_t prev0 = ipl_ports_[0];
+        if (port != 0) { ipl_ports_[port] = v; return; }
+        // Port-0 writes drive the IPL transfer protocol.
+        if (!ipl_transfer_) {
+            if (v == 0xCC && ipl_ports_[1] != 0) {
+                ipl_addr_ = static_cast<uint16_t>(ipl_ports_[2] |
+                                                  (ipl_ports_[3] << 8));
+                ipl_transfer_ = true;
+                ipl_last_index_ = 0xFF;  // next data byte is index 0
+            }
+            ipl_ports_[0] = v;  // echo
+            return;
+        }
+        const uint8_t expected = static_cast<uint8_t>(ipl_last_index_ + 1);
+        if (v == expected) {  // next data byte (port 1 holds it)
+            spc_.aram[ipl_addr_++] = ipl_ports_[1];
+            ipl_last_index_ = v;
+        } else if (v != prev0) {  // index jump: new block or execute
+            const uint16_t target = static_cast<uint16_t>(ipl_ports_[2] |
+                                                          (ipl_ports_[3] << 8));
+            if (ipl_ports_[1] == 0) {
+                spc_.start_at(target);  // kickoff: SPC700 begins execution
+            } else {
+                ipl_addr_ = target;     // additional block
+                ipl_last_index_ = 0xFF;
+            }
+        }
+        ipl_ports_[0] = v;  // echo
     }
 
     void run_dma(uint8_t enable) {

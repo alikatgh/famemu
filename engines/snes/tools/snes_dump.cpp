@@ -56,7 +56,12 @@ int main(int argc, char** argv) {
     }
 
     const std::string prefix = argv[2];
-    std::string script = argc > 3 ? argv[3] : "0:300";
+    std::string script = argc > 3 && argv[3][0] != '-' ? argv[3] : "0:300";
+    const char* wav_path = nullptr;
+    for (int i = 3; i < argc; ++i)
+        if (!std::strcmp(argv[i], "--wav") && i + 1 < argc) wav_path = argv[++i];
+    std::vector<int16_t> pcm;
+    int16_t chunk[4096];
     int frame = 0, dumped = 0;
     char path[512];
     for (size_t pos = 0; pos < script.size();) {
@@ -69,10 +74,16 @@ int main(int argc, char** argv) {
         for (int i = 0; i < frames; ++i) {
             sys.run_frame();
             ++frame;
+            if (wav_path) {
+                size_t got;
+                while ((got = sys.read_audio(chunk, 2048)) > 0)
+                    pcm.insert(pcm.end(), chunk, chunk + got * 2);
+            }
             if (getenv("SNES_DEBUG_ZP"))
-                std::fprintf(stderr, "f=%d mode=%d gstate=%d padd_edge=%02X pc=%02X:%04X\n",
+                std::fprintf(stderr, "f=%d mode=%d gstate=%d padd_edge=%02X pc=%02X:%04X song=%d\n",
                              frame, sys.wram_byte(58), sys.wram_byte(57),
-                             sys.wram_byte(63), sys.cpu().pbr, sys.cpu().pc);
+                             sys.wram_byte(63), sys.cpu().pbr, sys.cpu().pc,
+                             sys.spc_song());
         }
         if (frames > 0) {
             std::snprintf(path, sizeof path, "%s_%04d.ppm", prefix.c_str(), frame);
@@ -85,6 +96,28 @@ int main(int argc, char** argv) {
             }
         }
         pos = end + 1;
+    }
+    if (wav_path && !pcm.empty()) {
+        std::FILE* wf = std::fopen(wav_path, "wb");
+        if (wf) {
+            const uint32_t data_bytes = static_cast<uint32_t>(pcm.size() * 2);
+            const uint32_t rate = SDsp::kSampleRate;
+            uint8_t h[44] = {'R','I','F','F',0,0,0,0,'W','A','V','E','f','m','t',' ',
+                             16,0,0,0, 1,0, 2,0, 0,0,0,0, 0,0,0,0, 4,0, 16,0,
+                             'd','a','t','a',0,0,0,0};
+            auto put32 = [&](int off, uint32_t v) {
+                h[off] = v & 0xFF; h[off+1] = (v >> 8) & 0xFF;
+                h[off+2] = (v >> 16) & 0xFF; h[off+3] = (v >> 24) & 0xFF;
+            };
+            put32(4, 36 + data_bytes);
+            put32(24, rate);
+            put32(28, rate * 4);
+            put32(40, data_bytes);
+            std::fwrite(h, 1, 44, wf);
+            std::fwrite(pcm.data(), 2, pcm.size(), wf);
+            std::fclose(wf);
+            std::printf("wav: %zu stereo frames -> %s\n", pcm.size() / 2, wav_path);
+        }
     }
     std::printf("snes_dump: %d frames run, %d dumped (cpu pc=%02X:%04X)\n",
                 frame, dumped, sys.cpu().pbr, sys.cpu().pc);
