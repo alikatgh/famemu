@@ -66,7 +66,14 @@ int main(int argc, char** argv) {
         int frames = 0;
         std::sscanf(script.substr(pos, end - pos).c_str(), "%x:%d", &mask, &frames);
         sys.set_buttons(core_buttons(mask));
-        for (int i = 0; i < frames; ++i) { sys.run_frame(); ++frame; }
+        for (int i = 0; i < frames; ++i) {
+            sys.run_frame();
+            ++frame;
+            if (getenv("SNES_DEBUG_ZP"))
+                std::fprintf(stderr, "f=%d mode=%d gstate=%d padd_edge=%02X pc=%02X:%04X\n",
+                             frame, sys.wram_byte(58), sys.wram_byte(57),
+                             sys.wram_byte(63), sys.cpu().pbr, sys.cpu().pc);
+        }
         if (frames > 0) {
             std::snprintf(path, sizeof path, "%s_%04d.ppm", prefix.c_str(), frame);
             if (std::FILE* out = std::fopen(path, "wb")) {

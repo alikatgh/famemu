@@ -65,8 +65,9 @@ void SPpu::fetch_bg_pixel(int bg, int x, int y, Pixel& out) {
     const bool is_bg1 = (bg == 0);
     const uint8_t sc = is_bg1 ? bg1sc_ : bg3sc_;
     const int bpp = is_bg1 ? 4 : 2;
+    // $210B/$210C: LOW nibble = BG1/BG3, high nibble = BG2/BG4.
     const uint16_t tile_base =
-        static_cast<uint16_t>(((is_bg1 ? bg12nba_ & 0x0F : (bg34nba_ >> 4) & 0x0F)) << 12);
+        static_cast<uint16_t>(((is_bg1 ? bg12nba_ : bg34nba_) & 0x0F) << 12);
     const int sx = (x + (is_bg1 ? bg1hofs_ : bg3hofs_)) & 0x3FF;
     const int sy = (y + (is_bg1 ? bg1vofs_ : bg3vofs_)) & 0x3FF;
 

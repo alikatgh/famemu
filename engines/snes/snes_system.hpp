@@ -69,6 +69,7 @@ public:
     const uint8_t* framebuffer() const { return ppu_.framebuffer(); }
     Cpu65816& cpu() { return cpu_; }
     SPpu& ppu() { return ppu_; }
+    uint8_t wram_byte(uint32_t i) const { return wram_[i & 0x1FFFF]; }  // debug
 
     // ---- Bus16 -----------------------------------------------------------
     uint8_t read(uint32_t a24) override {
