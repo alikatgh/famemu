@@ -55,10 +55,25 @@ Priority: (1) NES gate 5 parity → (2) APU → (3) mappers+KORA proto →
   test ROMs — trivial code, flagged.)
 - [x] **Save states**: full-system snapshot (state.hpp), FamemuCoreAPI
   state_* real, round-trip replay bit-identical (state_test, ctest 9/9).
-- [ ] SNES: 65816 core start (LoROM, kora.sfc as target) ← IN PROGRESS
-      engines/snes/ — CPU first (65816 E/M/X modes), then LoROM bus, PPU
-      Mode 1, SPC700. Gate: KORA title renders; kora/snes/verify.sh dumps
-      become golden tests.
+- [x] SNES CPU: **complete 65816** (engines/snes/cpu65816.{hpp,cpp}, all 256
+  opcodes, native+emulation, runtime M/X widths). Compiles, committed
+  (52bb577). Coarse cycle model; no BCD (KORA never sets D).
+- [ ] SNES system ← NEXT, in this order:
+  1. engines/snes/bus.hpp — LoROM map: banks 00-3F/80-BF: $0000-1FFF WRAM
+     mirror, $2100-21FF PPU, $4200-437F CPU regs/DMA, $8000-FFFF ROM
+     (bank*0x8000); banks 7E/7F full WRAM. kora.sfc = LoROM, no coprocessor.
+  2. PPU Mode 1 scanline renderer: BG1 4bpp + BG3 2bpp hi-priority + OBJ,
+     CGRAM, HOFS/VOFS, INIDISP brightness, color math (CGADSUB+COLDATA
+     subtract for day/night), 256x224 RGB out.
+  3. DMA channels ($420B MDMAEN, $43x0-x6) — KORA uses general DMA to
+     $2118/19 (VRAM), $2122 (CGRAM), $2104 (OAM).
+  4. APU ports $2140-43: IPL handshake STATE MACHINE stub (ack $AA/$BB,
+     echo bytes) so KORA's spc_upload completes; real SPC700+DSP later.
+  5. NMI at line 225 ($4210 RDNMI + $4200 NMITIMEN), auto-joypad $4218/19.
+  6. Gate: kora.sfc boots to title through famemu_dump-style harness
+     (engines/snes/tools/), then kora/snes/verify.sh frame dumps as golden.
+- Morning-ready state: NES core DONE (all gates), famemu.app on the builtin
+  core, MAS entitlements written, SNES = CPU done + system plan above.
 - NOTE for the user: famemu/ (the Swift app) is still NOT a git repo — its
   changes (engine.cpp builtin backend, Model.swift default, entitlements)
   live only on disk. Decide where it should live (inside the famemu GitHub
