@@ -112,9 +112,22 @@ notarizes famemu with no extra flags.
 - [x] Signing + **notarize** flow wired into `make_dmg.sh` (env-var gated).
 - [ ] Provide a **Developer ID Application** cert to produce the notarized DMG.
 
-## Compliance checklist (future App Store build)
+## Compliance checklist (App Store build) — updated 2026-07-14
 
-- [ ] Own engine (no GPL code) + original shaders.
-- [ ] App Sandbox entitlement; single self-contained process (no subprocess exec).
-- [ ] Only ships/loads freely-distributable ROMs or user-provided files.
-- [ ] Follows App Review Guideline 4.7 (retro emulators, updated 2024).
+- [x] **Own engine (NES).** Clean-room core in the famemu repo (`engines/nes/`):
+  nestest 8991/8991, all 8 blargg sprite-hit + 4 apu_test + ppu_vbl_basics
+  pass, **100.0000% pixel parity with Nestopia on Rocket Rush** (996-frame
+  scripted gameplay diff). Compiled statically into famemu.app
+  (`builtin:nes` core path — the default; `FAMEMU_USE_NESTOPIA=1` A/Bs the
+  GPL reference in dev). SNES core: next engine (PLATFORM.md).
+- [x] Original Metal shaders (already ours).
+- [x] App Sandbox entitlements set written: `famemu-appstore.entitlements`
+  (sandbox + network.client + user-selected files + bookmarks). Single
+  process; the builtin core removed the dlopen/disable-library-validation
+  need. Sign the MAS build with THIS file; the DMG build keeps
+  `famemu.entitlements` until Nestopia fully retires.
+- [x] Only ships/loads freely-distributable ROMs or user-provided files
+  (bundled Rocket Rush is ours, PD).
+- [ ] App Store Connect: listing, screenshots, IAP-free v1 submission.
+- [ ] Follows App Review Guideline 4.7 (retro emulators, updated 2024) —
+  re-verify the current guideline text at submission time.

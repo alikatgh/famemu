@@ -35,12 +35,26 @@ Priority: (1) NES gate 5 parity → (2) APU → (3) mappers+KORA proto →
   alignment, corners, flip, left_clip, right_edge, screen_bottom,
   double_height) + ppu_vbl_basics PASS. blargg_harness supports the $6000
   protocol + screen dumps.
-- [ ] APU (pulse x2, tri, noise, DMC, frame counter) + audio_read
-- [ ] Mappers 1/2/3/4 (+ MMC3 A12 IRQ) → KORA NES proto (gate 6)
-- [ ] blargg test ROMs (instr/ppu_vbl_nmi/sprite-hit/apu) as ctest targets
-- [ ] famemu.app: static famemu_nes core replaces libretro/nestopia dlopen
-- [ ] Sandbox entitlements set + clean build of famemu.app
+- [x] **APU done: all 4 blargg apu_tests PASS** (len_ctr, len_table, irq_flag,
+  jitter) + Rocket Rush music verified via --wav (46/46 loud windows, 32
+  pitches). Frame counter: hw power-up $4017=$00, 29830-cycle period, $4017
+  reset delayed 2+odd cycles (bisected against 4-jitter). 7/7 ctest.
+- [x] **famemu.app now runs the clean-room core by default** ("builtin:nes"
+  in Paths.core; FAMEMU_USE_NESTOPIA=1 = dev A/B against the GPL dylib).
+  engine.cpp grew a builtin backend (no dlopen) feeding the same RF chain;
+  builtin_nes.cpp unity-includes the engine from the platform repo;
+  swift build green. Full product path verified: builtin core → RF modulate
+  → NTSC decode → gameplay screenshot with real analog artifacts.
+- [x] **famemu-appstore.entitlements written** (app-sandbox + network.client
+  + user-selected-files + bookmarks); DISTRIBUTION.md checklist updated —
+  the GPL/dlopen blockers for MAS are now REMOVED for the NES path.
+- [ ] Mappers 1/2/3/4 (+ MMC3 A12 IRQ) → KORA NES proto (gate 6) ← NEXT
+- [ ] Save states (store titles need suspend/resume)
 - [ ] SNES: 65816 core start (LoROM, kora.sfc as target)
+- NOTE for the user: famemu/ (the Swift app) is still NOT a git repo — its
+  changes (engine.cpp builtin backend, Model.swift default, entitlements)
+  live only on disk. Decide where it should live (inside the famemu GitHub
+  repo?) in the morning.
 
 ## Decisions made overnight (defaults picked without asking)
 - Parity metric: nearest-NES-index match ≥99.5% per frame across title,
