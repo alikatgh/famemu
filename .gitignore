@@ -9,3 +9,5 @@ build_tools/
 *.bmp
 *.f32
 .DS_Store
+# local-only SNES smoke ROM (game content stays out of the repo)
+engines/snes/tests/data/*.sfc

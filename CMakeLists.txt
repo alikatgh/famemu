@@ -83,6 +83,15 @@ target_include_directories(famemu_snes PUBLIC engines engines/include)
 add_executable(snes_dump engines/snes/tools/snes_dump.cpp)
 target_link_libraries(snes_dump PRIVATE famemu_snes)
 
+add_executable(snes_smoke_test engines/snes/tests/snes_smoke_test.cpp)
+target_link_libraries(snes_smoke_test PRIVATE famemu_snes)
+# Game content stays out of the public repo: drop a ROM at this path locally
+# (KORA is canonical) and the smoke test registers itself.
+if(EXISTS "${CMAKE_SOURCE_DIR}/engines/snes/tests/data/smoke.sfc")
+    add_test(NAME snes_smoke COMMAND snes_smoke_test
+        "${CMAKE_SOURCE_DIR}/engines/snes/tests/data/smoke.sfc")
+endif()
+
 add_executable(nestest_harness engines/nes/tests/nestest_main.cpp)
 target_link_libraries(nestest_harness PRIVATE famemu_nes)
 
