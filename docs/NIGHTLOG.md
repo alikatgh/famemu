@@ -14,13 +14,20 @@ boots, save states bit-identical. famemu.app builds with this core statically
 famemu-appstore.entitlements written (sandbox — the dlopen blocker is gone).
 ctest: 9/9.
 
-**The SNES engine exists and runs KORA's whole opening.** Complete 65816
-(all 256 opcodes), Mode-1 S-PPU, LoROM bus, DMA, IPL-handshake APU stub:
-title → all 4 prologue pages → the roamable WORLD (HUD, boy, teacher NPC),
-frames near-identical to the snes9x reference on the same input script.
-Remaining fidelity: day/night color-math phase differs (coarse frame
-timing), SPC700/DSP audio (silent stub), Mode 7, HDMA, full-game verify
-against kora/snes/verify.sh scenes.
+**The SNES engine runs KORA with GRAPHICS *AND* MUSIC.** Complete 65816,
+Mode-1 S-PPU, LoROM, DMA — plus (extended session) a REAL SPC700 (the
+driver's exact opcode set, loud log on gaps) and a REAL S-DSP (BRR voices,
+ADSR, ARAM echo + 8-tap FIR, 32 kHz): the IPL upload is captured into ARAM
+and executed. Verified: day-ambient music from boot; pressing Y opens the
+watch memory and the SPC port trace flips song 0→1 (mother's theme) — the
+dynamic score works end-to-end. Scene sweep vs snes9x at same absolute
+frames: title (its backdrop pan tracked frame-by-frame), prologue, world
+walk with "HER HANDS ON MY SHOULDERS" walk-memory, lessons journal — all
+matching. famemu.app now runs BOTH clean-room cores by default
+("builtin:snes" added; FAMEMU_USE_SNES9X=1 = dev A/B) — the app is fully
+GPL-free. ctest 10/10 incl. a new SNES smoke test (video lit + audio
+playing; local gitignored ROM). Remaining fidelity: day/night phase (coarse
+timing), Gaussian interp, Mode 7, HDMA, SNES save states.
 
 **Found & fixed in shipped code:** famitv_play + famemu engine.cpp input was
 silently dead with Nestopia (port-connect quirk) — fixed in both loaders.
