@@ -1,153 +1,184 @@
-# famicom-rf-hackrf-decoder
+# famemu · famitv — NES through a real analog TV signal chain
 
-[日本語 README はこちら](README.ja.md)
+Play NES games the way they actually looked in 1986: not with a "CRT filter",
+but by **re-encoding the emulator's video into a genuine NTSC-J RF signal and
+decoding it back** through a full software analog TV chain. The dot crawl,
+chroma bleed, rainbow shimmer on fine patterns, soft edges — all of it *emerges*
+from squeezing color video through one composite channel and band-splitting it
+back, exactly like a real TV did. Nothing is faked with shaders.
 
-> **This repo (famemu / famitv)** extends
-> [GOROman's `famicom-rf-hackrf-decoder`](https://github.com/GOROman/famicom-rf-hackrf-decoder)
-> (MIT): beyond decoding a real Famicom's RF, it re-encodes *emulated* NES frames
-> back into an NTSC-J signal and plays them through this same analog chain for a
-> real-analog-TV look (`tools/famitv_play`, `scripts/famitv.sh`). The original RF
-> decoder is © GOROman (see `LICENSE`, retained unchanged); the famitv/famemu
-> additions are contributed under the same MIT terms.
+```
+NES ROM → Nestopia (libretro) → NTSC-J modulator → RF signal (int8 IQ)
+        → mixer → band-limit → AM detect → sync/PLL → Y/C split → chroma demod
+        → your screen (plus optional CRT beam/mask/glow simulation)
+```
 
-A software decoder that receives the Famicom's VHF RF output (NTSC-J) with a
-HackRF One and displays it on your PC in real time — full NTSC color decoding
-plus FM intercarrier audio. C++20 + libhackrf + SDL2. No GNU Radio required.
+The same decode chain also works on **real hardware**: point a HackRF One at an
+actual Famicom's RF output and watch it live (see
+[Hardware mode](#hardware-mode-decode-a-real-famicom) below).
 
-Live decode of a real Famicom (Super Mario Bros.):
+Built on [GOROman's `famicom-rf-hackrf-decoder`](https://github.com/GOROman/famicom-rf-hackrf-decoder)
+(MIT) — the RF decoder at the heart of this project is his work (see
+[Credits](#credits--license)).
+
+## Quick start
+
+```sh
+brew install sdl2 cmake pkg-config        # macOS; Linux needs the same libs
+
+# Nestopia libretro core (NES emulation), as a sibling checkout:
+git clone https://github.com/libretro/nestopia ../third_party/nestopia
+make -C ../third_party/nestopia/libretro -j4
+
+# Play a ROM through the analog chain:
+scripts/famitv.sh path/to/game.nes
+```
+
+`famitv.sh` configures, builds, and launches. Everything is plain C++20 +
+SDL2 + CMake — no GNU Radio, no shader packs.
+
+### Controls
+
+| | |
+|---|---|
+| Gamepad (Switch Pro or any SDL controller) | d-pad / left stick, A, B, Start, Select (Back) |
+| Keyboard | arrows, `X` = A, `Z` = B, Enter = Start, RShift = Select |
+| `c` | color / grayscale |
+| `q` / ESC | quit |
+
+## The TV look, tunable
+
+```sh
+scripts/famitv.sh game.nes --noise 0.02 --scanlines 0.35   # antenna snow + scanlines
+scripts/famitv.sh game.nes --crt                           # full CRT simulation
+scripts/famitv.sh game.nes --bw 3.2e6                      # softer, narrower channel
+```
+
+| Flag | Effect |
+|---|---|
+| `--noise F` | channel noise → analog snow (try `0.02`) |
+| `--scanlines F` | darken alternate lines, 0..1 |
+| `--bw HZ` | channel bandwidth (lower = softer picture, default `4.3e6`) |
+| `--sat F` / `--hue DEG` | color trims |
+| `--generic` | plain RGB→NTSC re-encode instead of the real NES signal (below) |
+| `--crt` | full CRT display simulation |
+| `--crt-curve/-scan/-mask/-glow/-bright/-beam/-vig F` | CRT knobs: barrel curvature, scanline depth, aperture-grille mask, halation, brightness, beam width, vignette |
+| `--dump DIR` | headless: run frames and write decoded BMPs (verification/CI) |
+
+### The real NES composite signal (default)
+
+The NES PPU never output RGB — each of its 64 colors *is* a specific chroma
+phase and luma level on the composite wire. By default famitv reverse-maps the
+emulator's RGB back to NES color indices and synthesizes **that** waveform
+(Bisqwit's documented signal model), so NES color and its famous artifacts
+emerge from the physics instead of being painted on. `--generic` switches to a
+plain RGB→NTSC encode for comparison.
+
+### CRT simulation (`--crt`)
+
+A CPU reference implementation of the "screen" half of the look (the signal
+half is the RF chain): barrel geometry → bilinear resample → scanline beam
+profile → aperture-grille phosphor mask → halation/bloom → vignette → gamma.
+Written to be ported 1:1 to a Metal fragment shader for the real-time app.
+
+## No emulator? No hardware? — the loopback demo
+
+`famitv_loopback` needs nothing but this repo: it draws an animated synthetic
+scene (color bars, fine stripes, a scrolling "game"), pushes it through the
+full modulate→decode chain, and writes the decoded frames as BMPs:
+
+```sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DFAMITV_TOOLS_ONLY=ON
+cmake --build build -j
+./build/famitv_loopback out_dir
+```
+
+It's also the fastest way to *see* the artifacts: the 1-px stripes dot-crawl,
+the color bars ring at the transitions, saturated edges bleed.
+
+## Building by hand
+
+```sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build          # golden NTSC decode test
+```
+
+| Target | Needs | What it is |
+|---|---|---|
+| `famitv_play` | SDL2 + Nestopia checkout | the ROM player |
+| `famitv_loopback` | nothing | synthetic loopback demo |
+| `synth_ntsc` | nothing | golden test (color bars → decode → assert RGB) |
+| `famidec` | libhackrf + SDL2 | live HackRF decoder (hardware mode) |
+
+Missing libhackrf fails the configure loudly; pass `-DFAMITV_TOOLS_ONLY=ON`
+to build without it (the launcher script does this automatically). The
+Nestopia path can be overridden with `-DNESTOPIA_DIR=...`.
+
+## Hardware mode: decode a real Famicom
+
+The decode chain wasn't designed against emulator output — it was built to
+receive an **actual Famicom's VHF RF** (NTSC-J) with a HackRF One, in real
+time, with full NTSC color and FM intercarrier audio:
 
 ![real Famicom decode](docs/screenshot.png)
 
-Synthetic color-bar golden test output:
-
-![color bars](docs/colorbars.png)
-
-## Supported channels
-
-| Channel | Video carrier | Audio carrier (FM) |
-|---|---|---|
-| Japan VHF ch1 | 91.25 MHz | 95.75 MHz |
-| Japan VHF ch2 | 97.25 MHz | 101.75 MHz |
-
-The HackRF tunes 2.0 MHz above the video carrier to keep its DC spike out of
-the signal (ch1 → 93.25 MHz) and shifts back down in software.
-
-> **Note: real RF modulators drift.** The unit this was developed against
-> outputs its ch1 video carrier at 90.83 MHz (420 kHz below nominal). If you
-> can't get sync, run `--spectrum` first to find the actual carrier and pass
-> it with `--freq`. Envelope detection tolerates a residual offset of
-> ±100 kHz or so.
-
-## Build
-
 ```sh
-brew install hackrf sdl2 cmake pkg-config   # macOS; Linux needs the same libs
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+./build/famidec --channel 1 --spectrum    # find the real carrier first
+./build/famidec --channel 1               # live (Japan VHF ch1, 91.25 MHz)
+./build/famidec --freq 90.83e6            # real modulators drift — use the measured carrier
+./build/famidec --input file --file cap.cs8 --loop   # decode a recording
 ```
 
-Developed and tested on macOS (Apple Silicon); the code has no
-platform-specific dependencies beyond libhackrf and SDL2.
+Keys: `l`/`L` LNA ±8 dB, `g`/`G` VGA ±2 dB, `c` color/gray, `s` screenshot.
+While unlocked the display free-runs and shows snow, like a real TV. Run
+`--spectrum` first if you can't get sync; envelope detection tolerates
+±100 kHz of carrier offset. Full option list: `./build/famidec --help`.
 
-## Usage
-
-```sh
-# 1. Check the spectrum first (find the real carrier position)
-./build/famidec --channel 1 --spectrum
-
-# 2. Live display (channel preset, or the measured frequency)
-./build/famidec --channel 1
-./build/famidec --freq 90.83e6
-
-# Record raw IQ while decoding
-./build/famidec --freq 90.83e6 --record cap.cs8
-
-# Decode from a recording (hackrf_transfer .cs8 files work too)
-./build/famidec --input file --file cap.cs8 --loop
-
-# Headless: dump decoded frames as PPM (debug / verification)
-./build/famidec --input file --file cap.cs8 --dump-frames out_ --frames 30
-```
-
-### Options
-
-| Option | Description |
-|---|---|
-| `--channel 1\|2` | Japan VHF channel preset (default 1) |
-| `--freq HZ` | explicit video carrier frequency |
-| `--input hackrf\|file` | input source (default hackrf) |
-| `--file PATH` / `--loop` | .cs8 playback / loop |
-| `--rate HZ` / `--offset HZ` | sample rate (default 10e6) / tuning offset (default 2e6) |
-| `--lna N` / `--vga N` / `--amp` | LNA 0-40 (default 24) / VGA 0-62 (default 20) / RF amp |
-| `--mode color\|gray` | color / grayscale (default color) |
-| `--detector envelope\|sync` | envelope / carrier-PLL synchronous detection |
-| `--sat F` / `--hue DEG` | saturation / hue trim |
-| `--no-audio` / `--volume F` | disable FM audio / volume 0..1 (default 0.7) |
-| `--record PATH` | tee raw IQ to .cs8 while decoding |
-| `--dump-frames PREFIX` / `--frames N` | headless PPM frame dump |
-| `--dump-composite PATH` | dump post-AGC composite as f32 (debug) |
-| `--spectrum` | print PSD and exit (no video) |
-
-### Keys / on-screen display
-
-- `q` / ESC: quit, `l` / `L`: LNA ±8 dB, `g` / `G`: VGA ±2 dB,
-  `c`: color/gray toggle, `s`: screenshot (BMP)
-- **Top left (big green)**: retro-TV style channel number (`CH1`)
-- **Top right (yellow)**: `V-SYNC:OK H-SYNC:OK` and
-  `VHF:90.83MHz AUD:95.33MHz` — sync lock states, video and audio carriers
-- While unlocked the display free-runs and shows **snow**, like a real TV
-
-## How it works
+## How the chain works
 
 ```
-HackRF One (10 MSPS, tuned video carrier +2 MHz)
-  → complex DC blocker (removes the tuner DC spike)
-  → NCO mixer shifts the video carrier to 0 Hz
-  → 4.3 MHz complex LPF (rejects FM audio & adjacent channel)
-  → AM detection (envelope, or carrier-PLL synchronous)
-  → AGC (sync-tip / back-porch tracking → IRE normalization)
-  → sync separation + flywheel line PLL / vsync detection
-  → Y/C band split (3.58 MHz BPF, Y = composite − chroma)
-  → per-line color burst phase measurement → chroma QAM demod (U/V)
-  → YUV→RGB, 640×480 (240p line-doubled)
-  → triple buffer → SDL2 display
-audio tap (pre-LPF) → −4.5 MHz mix → ÷25 decimating FIR (400 kHz)
-  → FM discriminator → 75 µs de-emphasis → ÷8 → 50 kHz → SDL audio
+input (HackRF 10 MSPS, or the famitv modulator)
+  → complex DC blocker → NCO mixer (video carrier → 0 Hz)
+  → 4.3 MHz complex LPF → AM detection (envelope or carrier-PLL)
+  → AGC (sync-tip / back-porch → IRE) → sync separation + flywheel line PLL
+  → Y/C band split (3.58 MHz BPF) → per-line burst phase → chroma QAM demod
+  → YUV→RGB 640×480 (240p line-doubled) → triple buffer → SDL2
+audio tap → −4.5 MHz mix → decimating FIR → FM discriminator → de-emphasis → SDL audio
 ```
 
 The Famicom is not broadcast-compliant (non-interlaced 240p, chroma phase
-advancing 120° per line, one short line per frame), so the decoder:
-
-- splits Y/C by **frequency band**, not a line comb
-- detects vsync as a **long-pulse region** without requiring equalizing pulses
-- measures the color burst **independently on every line** instead of
-  relying on a burst PLL
-
-Threads: USB callback (push-only into an SPSC ring) → DSP thread
-(demod → frame assembly) → main thread (SDL render). Measured ~13× real-time
+advancing 120°/line, one short line per frame), so the decoder splits Y/C by
+frequency band rather than a line comb, detects vsync as a long-pulse region,
+and measures the color burst independently on every line. ~13× real-time
 headroom at 10 MSPS on Apple Silicon.
 
-## Tests
+The forward direction (famitv's modulator) is the exact inverse, sharing the
+same constants — subcarrier and carrier phase run continuously across fields
+like real hardware, with negative modulation (sync = 100% carrier).
 
-```sh
-./build/synth_ntsc            # synthesize color bars → decode → assert RGB
-./build/synth_ntsc bars.cs8   # write synthetic IQ as .cs8 (for E2E tests)
-ctest --test-dir build
+## Repo map
+
+```
+src/dsp/            decode chain + ntsc_modulator.hpp + nes_signal.hpp (NES composite model) + crt.hpp
+src/source, src/ui  HackRF input, SDL display/audio
+tools/              famitv_play.cpp (ROM player), famitv_loopback.cpp (demo)
+scripts/famitv.sh   build-and-play launcher
+tests/              synth_ntsc golden test
+docs/               audits, bug journal, distribution notes
 ```
 
-## Troubleshooting
+## Credits / license
 
-| Symptom | Fix |
-|---|---|
-| Snow, never syncs | run `--spectrum`, find the real carrier, pass `--freq` |
-| Too dark / blown out | adjust gain with `l`/`L` `g`/`G` (watch for clipping) |
-| No color (grayscale) | burst indicator stays yellow → improve signal/gain/frequency |
-| Wrong hues | trim with `--hue DEG` (e.g. `--hue 10`) |
-| Picture shifted vertically | tune `kActiveStartLine` in `src/dsp/ntsc_decoder.hpp` |
-| No sound | check `--volume`, or the RF modulator's audio carrier may be off-frequency |
+MIT — see [LICENSE](LICENSE).
 
-## License / disclaimer
+- **[GOROman](https://github.com/GOROman/famicom-rf-hackrf-decoder)** built the
+  original real-time HackRF Famicom RF decoder this project is founded on; his
+  copyright and license are retained unchanged. 日本語のオリジナル解説は
+  [README.ja.md](README.ja.md) にあります。
+- The NES composite signal model follows
+  [Bisqwit's public-domain documentation](https://wiki.nesdev.org/w/index.php/NTSC_video)
+  on the NESdev wiki.
+- famitv/famemu additions are contributed under the same MIT terms.
 
-MIT License — see [LICENSE](LICENSE).
-
-Receive-only tool. It never transmits with the HackRF One.
+Receive-only where hardware is involved: it never transmits with the HackRF One.
