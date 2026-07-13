@@ -70,11 +70,18 @@ target_link_libraries(synth_ntsc PRIVATE fam_dsp)
 add_test(NAME synth_ntsc COMMAND synth_ntsc)
 
 # --- Clean-room engines (no external deps; see docs/PLATFORM.md) ---
-add_library(famemu_nes STATIC engines/nes/cpu.cpp)
-target_include_directories(famemu_nes PUBLIC engines)
+add_library(famemu_nes STATIC
+    engines/nes/cpu.cpp engines/nes/ppu.cpp engines/nes/famemu_nes_core.cpp)
+target_include_directories(famemu_nes PUBLIC engines engines/include)
 
 add_executable(nestest_harness engines/nes/tests/nestest_main.cpp)
 target_link_libraries(nestest_harness PRIVATE famemu_nes)
+
+add_executable(famemu_dump engines/nes/tools/famemu_dump.cpp)
+target_link_libraries(famemu_dump PRIVATE famemu_nes)
+
+add_executable(blargg_harness engines/nes/tests/blargg_main.cpp)
+target_link_libraries(blargg_harness PRIVATE famemu_nes)
 if(EXISTS "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.nes")
     add_test(NAME nestest COMMAND nestest_harness
         "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.nes"

@@ -50,6 +50,30 @@ script name → one-line "what bug it was built to catch".
 
 Newest first. Five lines max per entry. File:line citations beat prose.
 
+### 2026-07-14 · PPU background rendered 1px left (reload/shift order)
+Symptom: blargg sprite_hit 02.alignment FAILED #3 — sprite "hit" a bg tile it shouldn't touch; hit fired at x=127 for a tile at x=128.
+Cause: engines/nes/ppu.cpp tick() ran bg_fetch_step (shifter reload) BEFORE shift_bg in the same dot, giving the fresh tile one extra shift.
+Fix: shift THEN reload (sample → shift → reload per dot). ppu.cpp fetch_window block.
+**Lesson:** in a shifter pipeline, reload must come after the current dot's shift — verify pipelines with an alignment test ROM, not by eyeballing game output.
+
+### 2026-07-14 · Sprites drawn one scanline too high
+Symptom: blargg 02.alignment FAILED #8 after the X fix; title star sprites offset vs Nestopia.
+Cause: evaluate_sprites used row = line - OAM.y; hardware delays sprites one line (visible at y+1..y+h).
+Fix: row = line - OAM.y - 1 (engines/nes/ppu.cpp evaluate_sprites).
+**Lesson:** OAM Y+1 delay is easy to drop when the eval already runs "one line ahead" — the two offsets don't cancel.
+
+### 2026-07-14 · All input silently dead through the libretro loaders (Nestopia)
+Symptom: no game responded to famemu/famitv input via Nestopia; headless START scripts left titles unchanged.
+Cause: Nestopia keeps controller ports unconnected for ROMs outside its database (all homebrew), and #defines RETRO_DEVICE_AUTO == RETRO_DEVICE_JOYPAD, so connecting with plain JOYPAD re-runs the same failing auto-detect.
+Fix: call retro_set_controller_port_device(port, (1u<<8)|RETRO_DEVICE_JOYPAD) (the SUBCLASS gamepad) after load_game — famemu/Sources/FamemuEngine/engine.cpp + tools/famitv_play.cpp.
+**Lesson:** after wiring a libretro core, verify input end-to-end with a scripted button press + frame diff; "compiles and renders" says nothing about input.
+
+### 2026-07-14 · Harness self-bug: dump_ppm args miscounted, script silently ignored
+Symptom: an hour chasing "Nestopia ignores input" — every scripted run produced identical frames.
+Cause: dump_ppm takes starts/hold/script at argv[5-7]; I passed an extra 0 so the script landed in argv[7]="0" (parsed as zero segments) and the real script in argv[8] was never read.
+Fix: correct invocation `dump_ppm core rom frames out 0 0 "script"`; famemu_dump prints frames-run so an accidental 0-frame run is visible.
+**Lesson:** when two emulators "disagree", first verify both actually RAN the scenario (frame counts in output) — a harness that silently no-ops reads as a target bug.
+
 ### 2026-07-13 · `famitv.sh` broken by the new famidec `FATAL_ERROR` (cross-file regression)
 Symptom: once fix #5 made a missing `libhackrf` a `FATAL_ERROR`, `scripts/famitv.sh` aborted at `cmake` configure on any machine without libhackrf — even though `famitv_play` (all the launcher builds) doesn't need it.
 Cause: `famitv.sh:24` ran plain `cmake ... -DCMAKE_BUILD_TYPE=Release` with no `-DFAMITV_TOOLS_ONLY=ON`, so the new default-fatal famidec gate fired; the per-file fix verifiers each saw only one file and couldn't catch the interaction.

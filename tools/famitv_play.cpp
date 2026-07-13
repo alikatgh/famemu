@@ -67,6 +67,7 @@ struct Core {
     void (*set_audio)(retro_audio_sample_t) = nullptr;
     void (*set_input_poll)(retro_input_poll_t) = nullptr;
     void (*set_input_state)(retro_input_state_t) = nullptr;
+    void (*set_port_device)(unsigned, unsigned) = nullptr;  // optional
 
     template <class T>
     void sym(T& fn, const char* name) {
@@ -92,6 +93,7 @@ struct Core {
         sym(set_audio, "retro_set_audio_sample");
         sym(set_input_poll, "retro_set_input_poll");
         sym(set_input_state, "retro_set_input_state");
+        sym(set_port_device, "retro_set_controller_port_device");
         return init && run && load_game && get_av && set_environment &&
                set_video && get_sysinfo && set_audio_batch && set_audio &&
                set_input_poll && set_input_state && unload_game && deinit;
@@ -336,6 +338,16 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "core failed to load ROM\n");
         core.deinit();
         return 1;
+    }
+
+    // Explicitly connect joypads. Two traps (see famemu engine.cpp): Nestopia
+    // leaves ports unconnected for ROMs outside its database (all homebrew),
+    // and it #defines RETRO_DEVICE_AUTO == RETRO_DEVICE_JOYPAD so plain JOYPAD
+    // re-runs the failing auto-detect. The SUBCLASS value forces PAD1/PAD2.
+    if (core.set_port_device) {
+        const unsigned kGamepad = (1u << 8) | RETRO_DEVICE_JOYPAD;  // SUBCLASS(JOYPAD, 0)
+        core.set_port_device(0, kGamepad);
+        core.set_port_device(1, kGamepad);
     }
 
     retro_system_av_info av;
