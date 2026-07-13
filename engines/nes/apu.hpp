@@ -53,6 +53,17 @@ public:
 
     bool irq_pending() const { return frame_irq_ || dmc_irq_; }
 
+    // Save states: everything but the transient sample ring and callbacks.
+    template <class S>
+    void serialize(S& s) {
+        s.io(p1_); s.io(p2_); s.io(tri_); s.io(noise_); s.io(dmc_);
+        s.io(five_step_); s.io(frame_irq_inhibit_); s.io(frame_irq_); s.io(dmc_irq_);
+        s.io(frame_div_); s.io(frame_step_); s.io(odd_cycle_);
+        s.io(pending_4017_delay_); s.io(pending_4017_val_);
+        s.io(sample_acc_);
+    }
+    void post_load() { rd_ = wr_ = 0; }  // drop stale audio after a load
+
 private:
     // ---- channels -------------------------------------------------------
     struct Envelope {

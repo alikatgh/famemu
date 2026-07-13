@@ -43,6 +43,21 @@ public:
     // NMI line: set at (241,1) when enabled; consumed by the system.
     bool take_nmi() { bool n = nmi_request_; nmi_request_ = false; return n; }
 
+    // Save states: one field list serves both directions (state.hpp).
+    template <class S>
+    void serialize(S& s) {
+        s.io(ctrl_); s.io(mask_); s.io(status_); s.io(oam_addr_);
+        s.io(v_); s.io(t_); s.io(fine_x_); s.io(w_); s.io(buffer_);
+        s.io(vram_); s.io(palette_); s.io(oam_);
+        s.io(scanline_); s.io(dot_); s.io(odd_frame_); s.io(frame_);
+        s.io(nmi_request_);
+        s.io(nt_latch_); s.io(at_latch_); s.io(bg_lo_latch_); s.io(bg_hi_latch_);
+        s.io(bg_shift_lo_); s.io(bg_shift_hi_);
+        s.io(at_shift_lo_); s.io(at_shift_hi_);
+        s.io(scan_sprites_); s.io(scan_count_);
+        s.io(fb_);
+    }
+
 private:
     Cart& cart_;
 

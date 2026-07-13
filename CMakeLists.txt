@@ -83,6 +83,13 @@ target_link_libraries(famemu_dump PRIVATE famemu_nes)
 
 add_executable(blargg_harness engines/nes/tests/blargg_main.cpp)
 target_link_libraries(blargg_harness PRIVATE famemu_nes)
+
+add_executable(state_test engines/nes/tests/state_test.cpp)
+target_link_libraries(state_test PRIVATE famemu_nes)
+if(EXISTS "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.nes")
+    add_test(NAME state_roundtrip COMMAND state_test
+        "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.nes")
+endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.nes")
     add_test(NAME nestest COMMAND nestest_harness
         "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.nes"

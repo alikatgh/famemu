@@ -49,9 +49,13 @@ void nes_set_input(int port, uint32_t buttons) {
     if (g_sys) g_sys->set_buttons(port, static_cast<uint8_t>(buttons & 0xFF));
 }
 
-size_t nes_state_size(void) { return 0; }              // save states: later gate
-int nes_state_save(uint8_t*, size_t) { return 0; }
-int nes_state_load(const uint8_t*, size_t) { return 0; }
+size_t nes_state_size(void) { return g_sys ? g_sys->state_size() : 0; }
+int nes_state_save(uint8_t* buf, size_t len) {
+    return (g_sys && g_sys->state_save(buf, len)) ? 1 : 0;
+}
+int nes_state_load(const uint8_t* buf, size_t len) {
+    return (g_sys && g_sys->state_load(buf, len)) ? 1 : 0;
+}
 
 const FamemuCoreAPI kNesApi = {
     "nes",

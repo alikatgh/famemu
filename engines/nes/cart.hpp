@@ -150,6 +150,20 @@ public:
     Mirroring mirroring() const { return mirroring_; }
     uint8_t mapper() const { return mapper_; }
 
+    // Save states: banking + IRQ state (+ CHR contents when it's RAM).
+    template <class S>
+    void serialize(S& s) {
+        s.io(mirroring_);
+        s.io(mmc1_shift_); s.io(mmc1_count_); s.io(mmc1_control_);
+        s.io(mmc1_chr0_); s.io(mmc1_chr1_); s.io(mmc1_prg_);
+        s.io(unrom_bank_); s.io(cnrom_bank_);
+        s.io(mmc3_bank_select_); s.io(mmc3_regs_);
+        s.io(mmc3_irq_latch_); s.io(mmc3_irq_counter_);
+        s.io(mmc3_irq_enable_); s.io(mmc3_irq_reload_); s.io(mmc3_irq_pending_);
+        if (chr_ram_) s.io_raw(chr_.data(), chr_.size());
+    }
+    size_t state_extra() const { return chr_ram_ ? chr_.size() : 0; }
+
 private:
     std::vector<uint8_t> prg_, chr_;
     bool chr_ram_ = false;

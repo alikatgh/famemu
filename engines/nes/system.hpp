@@ -12,6 +12,7 @@
 #include "cart.hpp"
 #include "cpu.hpp"
 #include "ppu.hpp"
+#include "state.hpp"
 
 namespace famemu::nes {
 
@@ -56,6 +57,34 @@ public:
     Ppu& ppu() { return ppu_; }
     Cpu6502& cpu() { return cpu_; }
     Apu& apu() { return apu_; }
+
+    // ---- save states ----------------------------------------------------
+    static constexpr uint32_t kStateMagic = 0x46414D31;  // "FAM1"
+
+    size_t state_size() const {
+        // Generous fixed bound: header + cpu + ram/sram/pads + ppu (vram,
+        // palette, oam, fb, pipeline) + apu + cart regs + chr-ram extra.
+        return 8 + 32 + sizeof ram_ + sizeof sram_ + 8 +
+               (0x800 + 32 + 256 + 256 * 240 + 256) + sizeof(Apu) + 256 +
+               cart_state_extra();
+    }
+
+    bool state_save(uint8_t* buf, size_t len) {
+        StateWriter w{buf, len};
+        w.io(kStateMagic);
+        serialize_all(w);
+        return w.ok;
+    }
+
+    bool state_load(const uint8_t* buf, size_t len) {
+        StateReader r{buf, len};
+        uint32_t magic = 0;
+        r.io(magic);
+        if (magic != kStateMagic) return false;
+        serialize_all(r);
+        if (r.ok) apu_.post_load();
+        return r.ok;
+    }
 
     // ---- Bus ----------------------------------------------------------
     uint8_t read(uint16_t a) override {
@@ -133,6 +162,19 @@ private:
         uint8_t r = pad_shift_[port] & 1;
         if (!strobe_) pad_shift_[port] = static_cast<uint8_t>(0x80 | (pad_shift_[port] >> 1));
         return static_cast<uint8_t>(0x40 | r);  // open-bus upper bits
+    }
+
+    size_t cart_state_extra() const { return cart_.state_extra(); }
+
+    template <class S>
+    void serialize_all(S& s) {
+        s.io(cpu_.pc); s.io(cpu_.a); s.io(cpu_.x); s.io(cpu_.y);
+        s.io(cpu_.s); s.io(cpu_.p); s.io(cpu_.cyc);
+        s.io(ram_); s.io(sram_);
+        s.io(pad_state_); s.io(pad_shift_); s.io(strobe_);
+        ppu_.serialize(s);
+        apu_.serialize(s);
+        cart_.serialize(s);
     }
 };
 
