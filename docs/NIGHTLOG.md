@@ -14,10 +14,13 @@ boots, save states bit-identical. famemu.app builds with this core statically
 famemu-appstore.entitlements written (sandbox — the dlopen blocker is gone).
 ctest: 9/9.
 
-**The SNES engine exists and runs KORA's opening.** Complete 65816 (all 256
-opcodes), Mode-1 S-PPU, LoROM bus, DMA, IPL-handshake APU stub: the KORA
-title renders near-identical to the snes9x reference, START advances to the
-prologue. Not yet: SPC700/DSP audio (silent), Mode 7, HDMA, full-game verify.
+**The SNES engine exists and runs KORA's whole opening.** Complete 65816
+(all 256 opcodes), Mode-1 S-PPU, LoROM bus, DMA, IPL-handshake APU stub:
+title → all 4 prologue pages → the roamable WORLD (HUD, boy, teacher NPC),
+frames near-identical to the snes9x reference on the same input script.
+Remaining fidelity: day/night color-math phase differs (coarse frame
+timing), SPC700/DSP audio (silent stub), Mode 7, HDMA, full-game verify
+against kora/snes/verify.sh scenes.
 
 **Found & fixed in shipped code:** famitv_play + famemu engine.cpp input was
 silently dead with Nestopia (port-connect quirk) — fixed in both loaders.
