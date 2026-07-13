@@ -1,6 +1,9 @@
 build/
 build-*/
 build_tools/
+
+# clangd / editor index cache (machine-specific)
+.cache/
 *.cs8
 *.ppm
 *.bmp
