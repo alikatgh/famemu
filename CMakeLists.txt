@@ -69,6 +69,18 @@ add_executable(synth_ntsc tests/synth_ntsc.cpp)
 target_link_libraries(synth_ntsc PRIVATE fam_dsp)
 add_test(NAME synth_ntsc COMMAND synth_ntsc)
 
+# --- Clean-room engines (no external deps; see docs/PLATFORM.md) ---
+add_library(famemu_nes STATIC engines/nes/cpu.cpp)
+target_include_directories(famemu_nes PUBLIC engines)
+
+add_executable(nestest_harness engines/nes/tests/nestest_main.cpp)
+target_link_libraries(nestest_harness PRIVATE famemu_nes)
+if(EXISTS "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.nes")
+    add_test(NAME nestest COMMAND nestest_harness
+        "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.nes"
+        "${CMAKE_SOURCE_DIR}/engines/nes/tests/data/nestest.log")
+endif()
+
 # --- Loopback demo: synthetic frames -> RF decoder -> BMP (DSP only) ---
 add_executable(famitv_loopback tools/famitv_loopback.cpp)
 target_link_libraries(famitv_loopback PRIVATE fam_dsp)
