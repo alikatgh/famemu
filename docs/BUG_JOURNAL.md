@@ -56,6 +56,12 @@ script name → one-line "what bug it was built to catch".
 
 Newest first. Five lines max per entry. File:line citations beat prose.
 
+### 2026-07-14 · HDMA scanline mapping: match snes9x's row = table-line y+1
+Symptom: hdma.sfc wave/gradient off by one line vs snes9x (odd rows shifted 1px).
+Cause: engine stepped HDMA once at scanline 0 AND once before fb row 0; snes9x maps fb row y to table line y+1 (no scanline-0 slot).
+Fix: hdma_init() only at line 0; one hdma_step() before each rendered row (snes_system.hpp run_frame).
+**Lesson:** when the gate is "identical to snes9x", match the REFERENCE's timing model, not the datasheet's — and note the divergence in a comment for a future hardware golden. Also: a test ROM writing both VRAM data ports needs VMAIN=$80, or the address advances mid-word and every tile grows a garbage row (seen as dashes in BOTH emulators = your ROM, not the engine).
+
 ### 2026-07-14 · Golden CRCs regenerated with a stale test binary "passed" garbage
 Symptom: 5 of 6 new mode7.sfc golden entries shared one CRC despite visually distinct screens; ctest still green.
 Cause: after the Mode 7 PPU change I rebuilt only snes_dump; snes_golden_test --gen (and the verify run) used the PRE-Mode7 binary, baking its garbage screens in as goldens.

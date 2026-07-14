@@ -43,6 +43,7 @@ public:
         ppu_.reset();
         nmitimen_ = 0;
         rdnmi_ = 0;
+        hdmaen_ = hdma_term_ = hdma_do_ = 0;
         in_vblank_ = false;
         joy1_ = 0;
         buttons_ = 0;
@@ -70,10 +71,18 @@ public:
                 if (nmitimen_ & 0x80) cpu_.nmi();
             } else if (line_ == 0) {
                 in_vblank_ = false;
+                // Init only: the first transfer lands with fb row 0's step
+                // below. (snes9x's visible-row mapping: row y = entry line
+                // y+1 of the table; hardware's extra scanline-0 slot is not
+                // modeled — revisit if we ever golden against hardware.)
+                hdma_init();
             }
             while (cpu_.cyc < budget && !cpu_.stopped) cpu_.step();
             spc_.run(65);  // ~1.024 MHz / 15734 lines
-            if (line_ < SPpu::kHeight) ppu_.render_line(line_);
+            if (line_ < SPpu::kHeight) {
+                hdma_step();       // fb row y = scanline y+1
+                ppu_.render_line(line_);
+            }
         }
         // 32 kHz DSP output: 32000 / 60.0988 fps ≈ 532.5 samples per frame.
         sample_acc_ += 32000.0 / 60.0988;
@@ -150,7 +159,7 @@ public:
             if (off >= 0x2100 && off < 0x2140) { ppu_.write(off & 0xFF, v); return; }
             if (off == 0x4200) { nmitimen_ = v; return; }
             if (off == 0x420B) { run_dma(v); return; }
-            if (off == 0x420C) { return; }  // HDMA: not used by KORA yet
+            if (off == 0x420C) { hdmaen_ = v; return; }
             if (off >= 0x4300 && off < 0x4380) { dma_[off - 0x4300] = v; return; }
             return;
         }
@@ -167,6 +176,7 @@ private:
     uint8_t dma_[0x80];
 
     uint8_t nmitimen_ = 0, rdnmi_ = 0;
+    uint8_t hdmaen_ = 0, hdma_term_ = 0, hdma_do_ = 0;
     bool in_vblank_ = false;
     uint16_t joy1_ = 0;
     uint32_t buttons_ = 0;
@@ -249,6 +259,68 @@ private:
         ipl_ports_[0] = v;  // echo
     }
 
+    // ---- HDMA: per-scanline table-driven transfers ($420C + $43xx) --------
+    // Table format per entry: line-count byte (bit7 = repeat), then either
+    // the unit data inline (direct) or a 2-byte pointer (indirect, DMAP bit6).
+    void hdma_init() {
+        hdma_term_ = hdma_do_ = 0;
+        for (int ch = 0; ch < 8; ++ch) {
+            if (!(hdmaen_ & (1 << ch))) continue;
+            uint8_t* r = &dma_[ch * 0x10];
+            r[8] = r[2]; r[9] = r[3];          // A2A = table base A1T
+            hdma_load(ch);
+        }
+    }
+    void hdma_load(int ch) {                   // fetch the next table entry
+        uint8_t* r = &dma_[ch * 0x10];
+        const uint32_t bank = static_cast<uint32_t>(r[4]) << 16;
+        uint16_t a2a = static_cast<uint16_t>(r[8] | (r[9] << 8));
+        const uint8_t cnt = read(bank | a2a++);
+        r[0xA] = cnt;
+        if (cnt == 0) {
+            hdma_term_ |= static_cast<uint8_t>(1 << ch);
+        } else {
+            if (r[0] & 0x40) {                 // indirect: fetch data pointer
+                r[5] = read(bank | a2a++);
+                r[6] = read(bank | a2a++);
+            }
+            hdma_do_ |= static_cast<uint8_t>(1 << ch);
+        }
+        r[8] = a2a & 0xFF; r[9] = a2a >> 8;
+    }
+    void hdma_step() {                         // one scanline for all channels
+        static const uint8_t kOff[8][4] = {{0, 0, 0, 0}, {0, 1, 0, 0},
+                                           {0, 0, 0, 0}, {0, 0, 1, 1},
+                                           {0, 1, 2, 3}, {0, 1, 0, 1},
+                                           {0, 0, 0, 0}, {0, 0, 1, 1}};
+        static const int kLen[8] = {1, 2, 2, 4, 4, 4, 2, 4};
+        for (int ch = 0; ch < 8; ++ch) {
+            const uint8_t bit = static_cast<uint8_t>(1 << ch);
+            if (!(hdmaen_ & bit) || (hdma_term_ & bit)) continue;
+            uint8_t* r = &dma_[ch * 0x10];
+            if (hdma_do_ & bit) {
+                const int mode = r[0] & 7;
+                const bool ind = r[0] & 0x40;
+                const uint32_t bank = static_cast<uint32_t>(ind ? r[7] : r[4]) << 16;
+                uint16_t a = ind ? static_cast<uint16_t>(r[5] | (r[6] << 8))
+                                 : static_cast<uint16_t>(r[8] | (r[9] << 8));
+                for (int i = 0; i < kLen[mode]; ++i)
+                    write(0x2100u | static_cast<uint8_t>(r[1] + kOff[mode][i]),
+                          read(bank | a++));
+                if (ind) { r[5] = a & 0xFF; r[6] = a >> 8; }
+                else     { r[8] = a & 0xFF; r[9] = a >> 8; }
+            }
+            const uint8_t cnt = --r[0xA];
+            if ((cnt & 0x7F) == 0) {
+                hdma_load(ch);                 // sets do/terminated
+            } else if (cnt & 0x80) {
+                hdma_do_ |= bit;               // repeat: transfer every line
+            } else {
+                hdma_do_ &= static_cast<uint8_t>(~bit);
+            }
+        }
+    }
+
     void run_dma(uint8_t enable) {
         for (int ch = 0; ch < 8; ++ch) {
             if (!(enable & (1 << ch))) continue;
@@ -297,6 +369,7 @@ private:
         s.io(cpu_.e); s.io(cpu_.cyc); s.io(cpu_.waiting); s.io(cpu_.stopped);
         s.io(wram_); s.io(sram_); s.io(dma_);
         s.io(nmitimen_); s.io(rdnmi_); s.io(in_vblank_); s.io(joy1_);
+        s.io(hdmaen_); s.io(hdma_term_); s.io(hdma_do_);
         s.io(buttons_); s.io(line_);
         s.io(ipl_transfer_); s.io(ipl_addr_); s.io(ipl_last_index_);
         s.io(ipl_ports_); s.io(sample_acc_);
