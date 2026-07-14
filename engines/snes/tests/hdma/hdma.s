@@ -142,8 +142,20 @@ reset:
     stx $4312
     lda #^wave_tab
     sta $4314
-    lda #$03
-    sta $420c            ; HDMA channels 0+1 on
+    ; ch2: mode 0 INDIRECT -> $2132 (COLDATA green): entries hold pointers
+    ; into separate data blocks, so the indirect fetch + pointer advance runs
+    lda #$40
+    sta $4320
+    lda #$32
+    sta $4321
+    ldx #.loword(ind_tab)
+    stx $4322
+    lda #^ind_tab
+    sta $4324
+    lda #^ind_data
+    sta $4327            ; indirect data bank
+    lda #$07
+    sta $420c            ; HDMA channels 0+1+2 on
 
     ; color math: ADD the fixed colour to BG1 + backdrop
     stz $2130
@@ -189,6 +201,17 @@ wave_tab:
     .endrepeat
 .endrepeat
     .byte 0
+
+; indirect table: 4 non-repeat entries x 56 lines, each pointing into the
+; shared data block — one indirect fetch per entry, pointer advances by one
+ind_tab:
+.repeat 4, i
+    .byte 56
+    .addr ind_data + i
+.endrepeat
+    .byte 0
+ind_data:
+    .byte $40 | 6, $40 | 12, $40 | 12, $40 | 6, $00
 
 .segment "SNESHEADER"
     .byte "HDMA ENGINE TEST     "

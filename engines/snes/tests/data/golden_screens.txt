@@ -18,4 +18,4 @@ mode7.sfc 168 3C6BE477
 mode7.sfc 232 6E8D8520
 mode7.sfc 296 9D432D30
 mode7.sfc 360 94D3A22F
-hdma.sfc 60 0327C86A
+hdma.sfc 60 093142C7
