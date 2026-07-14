@@ -1,0 +1,38 @@
+# Engine CI: build the clean-room cores and run the gates that need no game
+# ROMs (game content is gitignored). Public repo → Actions is free/unlimited.
+name: engine CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "engines/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/ci.yml"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y cc65 cmake build-essential
+
+      - name: Configure + build (tools only, no libhackrf)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DFAMITV_TOOLS_ONLY=ON
+          cmake --build build -j"$(nproc)"
+
+      - name: SPC7110 decompressor conformance (self-contained KAT)
+        run: ctest --test-dir build -R snes_spc7110_decomp --output-on-failure
+
+      - name: Assemble the engine test ROMs from source (ca65)
+        run: |
+          ( cd engines/snes/tests/features && ./build.sh )
+          ( cd engines/snes/tests/mode7    && ./build.sh )
+
+      - name: Golden screens (verified feature ROMs; game ROMs skipped)
+        run: ./build/snes_golden_test engines/snes/tests/data/golden_screens.txt
