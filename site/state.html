@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ember — engine state & verification</title>
+<meta name="description" content="The public feature matrix and verification status of the Ember 8 and Ember 16 engines: what's implemented, what's gated, and the one documented gap.">
+<link rel="canonical" href="https://ember.famemu.aulenor.com/state.html">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Ember — engine state & verification">
+<meta property="og:description" content="What's built in Ember 8 and Ember 16, and how each capability is verified. Nothing hidden — including the one unfinished feature.">
+<meta property="og:url" content="https://ember.famemu.aulenor.com/state.html">
+<link rel="stylesheet" href="style.css">
+<script>
+  const saved = localStorage.getItem("ember-theme");
+  if (saved) document.documentElement.dataset.theme = saved;
+</script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='6' y='2' width='4' height='4' fill='%23ff7a45'/><rect x='4' y='6' width='8' height='8' fill='%23e8be3c'/><rect x='7' y='9' width='2' height='3' fill='%230e0d16'/></svg>">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="./"><span class="tip">◆</span> ember</a>
+    <nav class="top">
+      <a href="index.html#consoles">Consoles</a>
+      <a href="index.html#how">How it works</a>
+      <a href="state.html" class="active">State</a>
+      <a href="https://github.com/alikatgh/famemu">Source</a>
+      <button class="theme-toggle" id="themeToggle" aria-label="Toggle light/dark theme">theme</button>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero" style="padding-bottom:16px">
+    <p class="kicker">Public status · updated 2026-07-14</p>
+    <h1>Engine state</h1>
+    <p class="sub">What's implemented in each Ember console, and how it's
+    verified. This page is deliberately complete — including the single
+    feature that isn't done yet. If it's marked
+    <span class="pill ok">verified</span>, an automated gate proves it on every
+    build.</p>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><b>0.000%</b><span>lockstep divergence</span></div>
+    <div class="stat"><b>43</b><span>lockstep frames + 3 scenarios</span></div>
+    <div class="stat"><b>66</b><span>golden screens</span></div>
+    <div class="stat"><b>16 / 16</b><span>CI test groups pass</span></div>
+    <div class="stat"><b>1</b><span>documented gap</span></div>
+  </div>
+
+  <section>
+    <h2>Ember 8 — the 8-bit console</h2>
+    <table class="mtx">
+      <thead><tr><th>Subsystem</th><th>Status</th><th>How it's verified</th></tr></thead>
+      <tbody>
+        <tr><td>CPU (6502-family)</td><td><span class="pill ok">verified</span></td><td class="g">community CPU test cartridge → golden log</td></tr>
+        <tr><td>Video — tiles, scroll, sprites</td><td><span class="pill ok">verified</span></td><td class="g">golden-screen CRCs</td></tr>
+        <tr><td>Sprite-0 hit + per-line limits</td><td><span class="pill ok">verified</span></td><td class="g">reference game (Rocket Rush HUD split)</td></tr>
+        <tr><td>Audio — 5 channels + DPCM</td><td><span class="pill ok">verified</span></td><td class="g">APU timing test cartridges (4 in CI)</td></tr>
+        <tr><td>Cartridge boards (mappers 0–4)</td><td><span class="pill ok">verified</span></td><td class="g">golden screens across board classes</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Ember 16 — the 16-bit console</h2>
+    <table class="mtx">
+      <thead><tr><th>Subsystem</th><th>Status</th><th>How it's verified</th></tr></thead>
+      <tbody>
+        <tr><td>CPU (65816, master-cycle timing)</td><td><span class="pill ok">verified</span></td><td class="g">13 community CPU test cartridges</td></tr>
+        <tr><td>All 8 background modes</td><td><span class="pill ok">verified</span></td><td class="g">lockstep vs reference silicon</td></tr>
+        <tr><td>Rotation / scaling (mode 7 + EXTBG)</td><td><span class="pill ok">verified</span></td><td class="g">6-case lockstep + goldens</td></tr>
+        <tr><td>True 512-wide hi-res + pseudo-hires</td><td><span class="pill ok">verified</span></td><td class="g">lockstep at 512×224</td></tr>
+        <tr><td>Windows, mosaic, color math, OPT</td><td><span class="pill ok">verified</span></td><td class="g">10-case feature lockstep</td></tr>
+        <tr><td>Per-scanline + mid-scanline raster</td><td><span class="pill ok">verified</span></td><td class="g">H-IRQ backdrop-split golden</td></tr>
+        <tr><td>Sprite range/time limits</td><td><span class="pill ok">verified</span></td><td class="g">overflow probe cartridge</td></tr>
+        <tr><td>Audio — sound CPU + 8-voice DSP</td><td><span class="pill ok">verified</span></td><td class="g">full instruction set; reference game soundtrack</td></tr>
+        <tr><td>NTSC + PAL, multitap, light gun</td><td><span class="pill ok">verified</span></td><td class="g">region + peripheral smoke tests</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Ember 16 — expansion chips</h2>
+    <p class="lead">Cartridges declare expansion hardware in the header; the
+    engine detects and runs it. All ship today.</p>
+    <table class="mtx">
+      <thead><tr><th>Chip class</th><th>What it adds</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Dual-CPU (SA-1-class)</td><td class="g">second CPU, fast RAM, DMA, char conversion, bitmap RAM</td><td><span class="pill ok">verified · 0.000%</span></td></tr>
+        <tr><td>RISC graphics (GSU-class)</td><td class="g">coprocessor with a pixel-plot pipeline for 3-D</td><td><span class="pill ok">verified · 0.000%</span></td></tr>
+        <tr><td>Math + 3-D (DSP-1-class)</td><td class="g">fixed-point math and 3-D projection unit</td><td><span class="pill ok">verified*</span></td></tr>
+        <tr><td>Bitmap unit (DSP-2-class)</td><td class="g">conversion, overlay, and scaling</td><td><span class="pill ok">verified · 0.000%</span></td></tr>
+        <tr><td>Wireframe (Cx4-class)</td><td class="g">vector transform and math ops</td><td><span class="pill ok">functional</span></td></tr>
+        <tr><td>Decompression (S-DD1-class)</td><td class="g">entropy decoder fed straight into DMA</td><td><span class="pill ok">exact algorithm</span></td></tr>
+        <tr><td>Driving math (ST010-class)</td><td class="g">sort, direction, scale, rotate</td><td><span class="pill ok">functional</span></td></tr>
+        <tr><td>Data + clock (SPC7110-class)</td><td class="g">ROM banking and a real-time clock</td><td><span class="pill gap">banking + RTC only</span></td></tr>
+      </tbody>
+    </table>
+    <div class="note">* Math-chip trig and inverse tables are <b>computed</b>
+      from their definitions, not dumped from silicon. Five core commands
+      match the reference bit-for-bit; two differ by ≤2 low bits and are
+      pinned by golden screens instead. This is the clean-room tradeoff, stated
+      plainly.</div>
+  </section>
+
+  <section>
+    <h2>The one gap</h2>
+    <p>The <b>SPC7110-class decompressor</b> is not implemented — its ROM
+    banking and real-time clock work, but the context-modeled decompression
+    engine is stubbed and logs on first use. It affects three Japan-only
+    commercial titles; it is irrelevant to writing new games for Ember 16.
+    We list it here rather than quietly omit it, because an honest state page
+    is worth more than a complete-looking one.</p>
+  </section>
+
+  <section>
+    <h2>How verification works</h2>
+    <p class="lead">Three layers, all enforced by <code>ctest</code> on every
+    build. The gates are the documentation's warranty.</p>
+    <div class="grid">
+      <div class="cell">
+        <h3>Community test cartridges</h3>
+        <p>The standard 6502 / 65816 / audio correctness suites, run to golden
+        CRCs. These are the same cartridges homebrew developers already trust.</p>
+      </div>
+      <div class="cell">
+        <h3>Lockstep diffs</h3>
+        <p>Our own feature cartridges rendered by both Ember and a reference
+        implementation of the hardware, compared frame-by-frame. 43 frames plus
+        three full gameplay scenarios, all at 0.000% divergence today.</p>
+      </div>
+      <div class="cell">
+        <h3>Golden screens</h3>
+        <p>66 CRC-pinned frames catch any drift — including effects the oracle
+        can't gate (mid-scanline splits, interlace fields, computed-table chip
+        ops). Any change to a verified screen fails the build.</p>
+      </div>
+    </div>
+    <div class="note">Reference emulators are used <b>only as test oracles</b>.
+      None of their code is linked, derived, or shipped. See the
+      <a href="https://github.com/alikatgh/famemu/blob/main/docs/engines/HERITAGE.md">heritage &amp; clean-room policy</a>.</div>
+  </section>
+
+</div>
+
+<footer class="site">
+  <div class="wrap">
+    <span>Ember 8 / Ember 16 — part of the <a href="https://github.com/alikatgh/famemu">famemu</a> platform.</span>
+    <span>Engines: zlib / MIT.</span>
+    <span><a href="index.html">← Back to overview</a></span>
+  </div>
+</footer>
+
+<script>
+  const t = document.getElementById("themeToggle");
+  t.addEventListener("click", () => {
+    const cur = document.documentElement.dataset.theme
+      || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    const next = cur === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("ember-theme", next);
+  });
+</script>
+
+</body>
+</html>

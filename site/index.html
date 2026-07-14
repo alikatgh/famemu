@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ember — fantasy consoles with real-hardware soul</title>
+<meta name="description" content="Ember 8 and Ember 16 are free, open-source game engines with the exact constraints of classic 8-bit and 16-bit console hardware. Write a real cartridge with a standard toolchain; publish it on the famemu store.">
+<link rel="canonical" href="https://ember.famemu.aulenor.com/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Ember — fantasy consoles with real-hardware soul">
+<meta property="og:description" content="Free, open-source 8-bit and 16-bit game engines with hardware-authentic behavior, verified pixel-for-pixel. Write a cartridge; ship it on the famemu store.">
+<meta property="og:url" content="https://ember.famemu.aulenor.com/">
+<meta name="twitter:card" content="summary">
+<link rel="stylesheet" href="style.css">
+<script>
+  const saved = localStorage.getItem("ember-theme");
+  if (saved) document.documentElement.dataset.theme = saved;
+</script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='6' y='2' width='4' height='4' fill='%23ff7a45'/><rect x='4' y='6' width='8' height='8' fill='%23e8be3c'/><rect x='7' y='9' width='2' height='3' fill='%230e0d16'/></svg>">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="./"><span class="tip">◆</span> ember</a>
+    <nav class="top">
+      <a href="#consoles">Consoles</a>
+      <a href="#how">How it works</a>
+      <a href="state.html">State</a>
+      <a href="https://github.com/alikatgh/famemu">Source</a>
+      <button class="theme-toggle" id="themeToggle" aria-label="Toggle light/dark theme">theme</button>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero">
+    <p class="kicker">Two fantasy consoles · one free engine family</p>
+    <h1>Real cartridges.<br>Real <em>hardware</em> soul.</h1>
+    <p class="sub">Ember 8 and Ember 16 are open-source game engines with the
+    exact constraints of classic 8-bit and 16-bit consoles. You write a genuine
+    cartridge image with a standard 6502 / 65816 toolchain. It runs on iPhone,
+    iPad, and Mac — and ships on the famemu store. The constraints aren't a
+    filter over modern code; they're the medium, and they behave like silicon.</p>
+    <div class="cta">
+      <a class="btn primary" href="state.html">See what's built</a>
+      <a class="btn" href="https://github.com/alikatgh/famemu/tree/main/docs/engines">Read the docs</a>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><b>2</b><span>consoles: 8-bit & 16-bit</span></div>
+    <div class="stat"><b>0.000%</b><span>divergence vs reference silicon</span></div>
+    <div class="stat"><b>43</b><span>frames verified in lockstep</span></div>
+    <div class="stat"><b>8</b><span>expansion chips on Ember&nbsp;16</span></div>
+    <div class="stat"><b>free</b><span>engines, open source, forever</span></div>
+    <div class="stat"><b>zlib</b><span>build & ship what you make</span></div>
+  </div>
+
+  <section id="consoles">
+    <h2>Two consoles, one contract</h2>
+    <p class="lead">Both engines expose the same tiny C interface, so the app,
+    the store, and the tools never care which one is running. Pick the era that
+    fits your game.</p>
+
+    <div class="grid tier2">
+      <div class="cell">
+        <h3>Ember 8 &nbsp;— the 8-bit era</h3>
+        <p>An 8-bit 6502-family CPU, a 256×240 tile-and-sprite picture with a
+        64-color palette, and five audio channels (two pulse, triangle, noise,
+        and sampled DPCM). Cartridge boards from fixed 32K up to the workhorse
+        bank-switcher with a scanline IRQ counter. Sprite-0 splits, mid-frame
+        scroll, raster HUD bars — all exactly as the hardware did them.</p>
+      </div>
+      <div class="cell">
+        <h3>Ember 16 &nbsp;— the 16-bit era</h3>
+        <p>A 16-bit 65816 with true master-cycle timing, four background layers
+        across eight video modes (rotation and scaling, genuine 512-wide hi-res,
+        per-scanline and mid-scanline raster effects), 128 sprites, and a real
+        audio subsystem: a dedicated sound CPU driving an 8-voice sample DSP with
+        echo. Cartridges can add math, 3-D, decompression, and dual-CPU chips.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <h2>How it works</h2>
+    <p class="lead">The engine is the funnel; the store is the business. The
+    code is free so anyone can build on it — the catalog and curation are ours.</p>
+
+    <div class="grid">
+      <div class="cell">
+        <h3>1 · Write a cartridge</h3>
+        <p>Assemble with the mature <code>cc65</code> toolchain against a memory
+        map. Start from the maintained example games and the feature demos —
+        each one boots from reset and exercises one subsystem in ~200 lines.</p>
+      </div>
+      <div class="cell">
+        <h3>2 · Run it anywhere</h3>
+        <p>The famemu app runs your image on iOS and macOS. Every engine is
+        deterministic: same cartridge, same input, identical frames on every
+        device. That guarantee is what the whole test pipeline is built on.</p>
+      </div>
+      <div class="cell">
+        <h3>3 · Ship on the store</h3>
+        <p>Submit an original game; it's curated, signed, and sold. Engines
+        stay free; games are the paid catalog. The app is a games platform —
+        it runs store-signed content and your own dev builds, nothing else.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="honest">
+    <h2>Authenticity you can check</h2>
+    <p class="lead">"Hardware-authentic" is a testable claim here, not a vibe.
+    Every capability the engines advertise is pinned by an automated gate.</p>
+
+    <div class="grid tier2">
+      <div class="cell">
+        <h3>Verified against silicon</h3>
+        <p>The engines render the same test cartridges as a reference
+        implementation of each hardware class, and CI diffs the output
+        frame-by-frame. Current standing: <b>43 lockstep frames and three full
+        gameplay scenarios at 0.000% divergence</b>, plus 66 CRC-pinned golden
+        screens. If a doc claims it, a gate proves it.</p>
+      </div>
+      <div class="cell">
+        <h3>Clean-room and honest about gaps</h3>
+        <p>Every line is original, from public documentation — no dumped chip
+        ROMs, no copyleft emulator code. Reference emulators are used only as
+        test oracles. And we publish the one feature still unfinished (the
+        SPC7110-class decompressor) rather than paper over it. See the
+        <a href="state.html">state page</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="start">
+    <h2>Start building</h2>
+    <p class="lead">Everything a developer needs is public.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/alikatgh/famemu/blob/main/docs/engines/DEVELOPER_GUIDE.md">Developer guide</a>
+      <a class="btn" href="https://github.com/alikatgh/famemu/blob/main/docs/engines/API.md">Engine API</a>
+      <a class="btn" href="https://github.com/alikatgh/famemu/blob/main/docs/engines/STORE_POLICY.md">Store policy</a>
+    </div>
+  </section>
+
+</div>
+
+<footer class="site">
+  <div class="wrap">
+    <span>Ember 8 / Ember 16 — part of the <a href="https://github.com/alikatgh/famemu">famemu</a> platform.</span>
+    <span>Engines: zlib / MIT.</span>
+    <span><a href="https://github.com/alikatgh/famemu/blob/main/docs/engines/HERITAGE.md">Heritage & clean-room policy</a></span>
+  </div>
+</footer>
+
+<script>
+  const t = document.getElementById("themeToggle");
+  t.addEventListener("click", () => {
+    const cur = document.documentElement.dataset.theme
+      || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    const next = cur === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("ember-theme", next);
+  });
+</script>
+
+</body>
+</html>

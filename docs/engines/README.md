@@ -44,6 +44,13 @@ scheduled to migrate to `ember8`/`ember16` at the next ABI-breaking change.
 | [STORE_POLICY.md](STORE_POLICY.md) | What the store accepts; content and legal requirements |
 | [HERITAGE.md](HERITAGE.md) | Hardware lineage, clean-room policy, verification methodology |
 
+## Public site
+
+The marketing + status pages live in [`site/`](../../site/) (static, no build)
+— `index.html` is the pitch, `state.html` is the public feature/verification
+matrix. Intended at `ember.famemu.aulenor.com`. Keep `state.html` in sync
+with the gates: only mark a capability verified if `ctest` proves it.
+
 ## Status
 
 Both engines are complete and gated:
