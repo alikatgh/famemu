@@ -63,7 +63,8 @@ Both engines are complete and gated:
   sample-based audio, and the complete expansion-chip lineup (math, 3-D,
   decompression, and dual-CPU coprocessors) — verified by 40 lockstep
   frames against a reference implementation at 0.000% divergence plus 66
-  golden screens. One documented gap: the SPC7110-class decompressor.
+  golden screens, plus a decompressor conformance test. No remaining gaps —
+  the last one (the SPC7110-class decompressor) is implemented and gated.
 
 Every claim above is enforced by `ctest` in this repository — if it's in
 the docs, there's a gate for it.

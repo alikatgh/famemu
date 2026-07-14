@@ -61,7 +61,7 @@ the engine:
 | DSP-2-class | bitmap conversion/scaling unit | all 5 ops lockstep, 0.000% |
 | Cx4-class | wireframe/math unit | functional HLE |
 | S-DD1-class | entropy decompression fed straight into DMA | exact public-domain algorithm |
-| SPC7110-class | data banking + RTC | decompressor **not yet implemented** (the one gap) |
+| SPC7110-class | data banking + RTC + arithmetic decompressor | decompressor verified against the reference decoder (3/3 modes) |
 | ST010-class | driving-game math unit | main ops implemented |
 
 ## Regions and peripherals

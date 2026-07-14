@@ -5,7 +5,7 @@ contained, no build step — three files:
 
 - `index.html` — the pitch (vision, the two consoles, how the store works).
 - `state.html` — the **public engine-state page**: feature matrix and
-  verification status for both consoles, including the one documented gap.
+  verification status for both consoles — every subsystem, and how it's gated.
   This is the "some of the state must be public" surface; keep its numbers
   in sync with `ctest` (lockstep frame count, golden-screen count, gaps).
 - `style.css` — shared house style (dark-default, theme toggle, hairline
@@ -23,8 +23,8 @@ domain in the repo's Pages settings — same flow as the lantern site).
 The state page makes checkable claims. When engine capability changes, update
 `state.html` in the SAME commit — and only mark a row `verified` if a gate in
 `ctest` actually proves it. The numbers today: 43 lockstep frames + 3
-gameplay scenarios at 0.000%, 66 golden screens, 16/16 CI groups, 1 gap
-(SPC7110-class decompression).
+gameplay scenarios at 0.000%, 66 golden screens, a decompressor conformance
+test, 17/17 CI groups, and no remaining gaps.
 
 ## Local preview
 

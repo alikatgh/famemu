@@ -29,8 +29,9 @@ free, curated games are paid. That only works if every title is clean.
   identically (players get suspend on phone calls; it must not corrupt).
 - Runs to completion of the submitted script with no engine warnings
   (unimplemented-feature logs fail QA).
-- Ember 16 titles using the SPC7110-class decompressor: not yet — that
-  engine feature is stubbed (the only one).
+- Every engine subsystem is implemented; there is no "unsupported feature"
+  carve-out. (The last gap, the SPC7110-class decompressor, is done and
+  gated against the reference decoder.)
 
 ## Distribution and signing
 

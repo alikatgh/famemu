@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ember — engine state & verification</title>
-<meta name="description" content="The public feature matrix and verification status of the Ember 8 and Ember 16 engines: what's implemented, what's gated, and the one documented gap.">
+<meta name="description" content="The public feature matrix and verification status of the Ember 8 and Ember 16 engines: what's implemented and how each capability is gated. Every subsystem is done.">
 <link rel="canonical" href="https://ember.famemu.aulenor.com/state.html">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Ember — engine state & verification">
@@ -54,8 +54,8 @@
     <div class="stat"><b>0.000%</b><span>lockstep divergence</span></div>
     <div class="stat"><b>43</b><span>lockstep frames + 3 scenarios</span></div>
     <div class="stat"><b>66</b><span>golden screens</span></div>
-    <div class="stat"><b>16 / 16</b><span>CI test groups pass</span></div>
-    <div class="stat"><b>1</b><span>documented gap</span></div>
+    <div class="stat"><b>17 / 17</b><span>CI test groups pass</span></div>
+    <div class="stat"><b>0</b><span>remaining gaps</span></div>
   </div>
 
   <section>
@@ -104,7 +104,7 @@
         <tr><td>Wireframe (Cx4-class)</td><td class="g">vector transform and math ops</td><td><span class="pill ok">functional</span></td></tr>
         <tr><td>Decompression (S-DD1-class)</td><td class="g">entropy decoder fed straight into DMA</td><td><span class="pill ok">exact algorithm</span></td></tr>
         <tr><td>Driving math (ST010-class)</td><td class="g">sort, direction, scale, rotate</td><td><span class="pill ok">functional</span></td></tr>
-        <tr><td>Data + clock (SPC7110-class)</td><td class="g">ROM banking and a real-time clock</td><td><span class="pill gap">banking + RTC only</span></td></tr>
+        <tr><td>Data + clock (SPC7110-class)</td><td class="g">ROM banking, RTC, and the arithmetic decompressor</td><td><span class="pill ok">verified · 3/3 modes</span></td></tr>
       </tbody>
     </table>
     <div class="note">* Math-chip trig and inverse tables are <b>computed</b>
@@ -115,13 +115,14 @@
   </section>
 
   <section>
-    <h2>The one gap</h2>
-    <p>The <b>SPC7110-class decompressor</b> is not implemented — its ROM
-    banking and real-time clock work, but the context-modeled decompression
-    engine is stubbed and logs on first use. It affects three Japan-only
-    commercial titles; it is irrelevant to writing new games for Ember 16.
-    We list it here rather than quietly omit it, because an honest state page
-    is worth more than a complete-looking one.</p>
+    <h2>No remaining gaps</h2>
+    <p>Every subsystem above is implemented. The last one to land — the
+    <b>SPC7110-class arithmetic decompressor</b> — is a faithful port of the
+    public reverse-engineered decoder, gated by a conformance test that runs
+    our port and the reference implementation over the same data and requires
+    byte-identical output across all three compression modes. We kept this
+    section rather than delete it, because tracking the gaps honestly is how
+    the page earned trust while there still were some.</p>
   </section>
 
   <section>

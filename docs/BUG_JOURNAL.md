@@ -68,6 +68,12 @@ script name → one-line "what bug it was built to catch".
 
 Newest first. Five lines max per entry. File:line citations beat prose.
 
+### 2026-07-14 (PM3) · Gate a decompressor you can't encode with a known-answer test
+Symptom: SPC7110 decompressor had no gate — no PD test cart, and hand-authoring a compressed stream needs the (unwritten) encoder.
+Cause: the decoder is total (any bytes decode to *some* deterministic output), so a lockstep frame test wasn't needed — just faithfulness of the port.
+Fix: KAT — run OUR port and byuu's reference decoder over the SAME pseudo-random "data ROM" (identical LCG), require byte-identical output for modes 0/1/2 (snes_spc7110_test.cpp, tools/spc7110_ref.md documents regen).
+**Lesson:** to gate a faithful port of a total function, feed both it and the reference the same arbitrary input and diff — no valid/encoded input needed. Hoist the reference's method-`static` decoder state to instance members or two machines share it.
+
 ### 2026-07-14 (PM2) · SA-1 char-conversion: the oracle's SOURCE beats guessing the protocol
 Symptom: CC1/CC2 test slots 100% off vs snes9x while famemu matched my own design exactly.
 Cause: I guessed CC semantics (trigger regs, type-bit polarity, pixel packing); snes9x's actual model differs on all three (CC2 = $224F-only, 16 pixels/write, tile per 4 writes; CC1 converts during S-CPU DMA from banks $40+, not window reads; DCNT bit4 CLEAR = CC2).

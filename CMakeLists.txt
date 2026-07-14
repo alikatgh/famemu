@@ -92,6 +92,11 @@ target_link_libraries(snes_state_test PRIVATE famemu_snes)
 
 add_executable(snes_golden_test engines/snes/tests/snes_golden_test.cpp)
 target_link_libraries(snes_golden_test PRIVATE famemu_snes)
+
+# SPC7110 decompressor port vs the byuu/neviksti reference (self-contained).
+add_executable(snes_spc7110_test engines/snes/tests/snes_spc7110_test.cpp)
+target_link_libraries(snes_spc7110_test PRIVATE famemu_snes)
+add_test(NAME snes_spc7110_decomp COMMAND snes_spc7110_test)
 if(EXISTS "${CMAKE_SOURCE_DIR}/engines/snes/tests/data/golden_screens.txt")
     add_test(NAME snes_golden_screens COMMAND snes_golden_test
         "${CMAKE_SOURCE_DIR}/engines/snes/tests/data/golden_screens.txt")

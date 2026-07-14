@@ -25,9 +25,12 @@ branding, App Store material, store listings, or game titles.
   behavioral protocol; the math-chip trig/inverse tables are computed from
   their mathematical definitions. Where a table's quantization differs
   from silicon by a couple of low bits, the file header says so.
-- The one third-party algorithm included is the S-DD1-class decompressor,
-  from Andreas Naive's analysis, which its author placed in the public
-  domain — credited in `engines/snes/sdd1.hpp`.
+- Two third-party algorithms are included, both from permissively-licensed
+  reverse-engineering work and credited in-file: the S-DD1-class
+  decompressor (Andreas Naive, public domain, `engines/snes/sdd1.hpp`) and
+  the SPC7110-class arithmetic decompressor (byuu & neviksti, ISC-style,
+  `engines/snes/spc7110_decomp.hpp`). Neither is a dumped ROM; both are the
+  documented algorithm.
 - Reference emulators (snes9x) are used **only as test oracles**: our CI
   renders the same test cartridges in both and diffs frames. Nothing from
   them ships in the engines or the app.
