@@ -23,7 +23,12 @@ Built on [GOROman's `famicom-rf-hackrf-decoder`](https://github.com/GOROman/fami
 
 ---
 
-## <img src="brand/png/ember-flame-512.png" width="28" align="top" alt=""> Ember game engines
+## Ember game engines
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/png/lockup.png">
+  <img src="brand/png/lockup-dark.png" width="230" alt="Ember">
+</picture>
 
 This repo also houses **Ember 8** and **Ember 16** — free, open-source game
 engines with the exact constraints of classic 8-bit and 16-bit console
