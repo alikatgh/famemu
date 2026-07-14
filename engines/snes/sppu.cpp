@@ -19,10 +19,18 @@ void SPpu::write(uint8_t reg, uint8_t v) {
         case 0x09: bg3sc_ = v; break;
         case 0x0B: bg12nba_ = v; break;
         case 0x0C: bg34nba_ = v; break;
-        case 0x0D: bg1hofs_ = static_cast<uint16_t>((v << 8) | scroll_latch_) & 0x3FF;
-                   scroll_latch_ = v; break;   // write-twice: new<<8|prev, simplified
-        case 0x0E: bg1vofs_ = static_cast<uint16_t>((v << 8) | scroll_latch_) & 0x3FF;
-                   scroll_latch_ = v; break;
+        case 0x0D:  // BG1HOFS doubles as M7HOFS (separate latch, 13-bit signed)
+            bg1hofs_ = static_cast<uint16_t>((v << 8) | scroll_latch_) & 0x3FF;
+            scroll_latch_ = v;   // write-twice: new<<8|prev, simplified
+            m7hofs_ = sign13(static_cast<uint16_t>((v << 8) | m7_latch_));
+            m7_latch_ = v;
+            break;
+        case 0x0E:
+            bg1vofs_ = static_cast<uint16_t>((v << 8) | scroll_latch_) & 0x3FF;
+            scroll_latch_ = v;
+            m7vofs_ = sign13(static_cast<uint16_t>((v << 8) | m7_latch_));
+            m7_latch_ = v;
+            break;
         case 0x0F: bg2hofs_ = static_cast<uint16_t>((v << 8) | scroll_latch_) & 0x3FF;
                    scroll_latch_ = v; break;
         case 0x10: bg2vofs_ = static_cast<uint16_t>((v << 8) | scroll_latch_) & 0x3FF;
@@ -31,6 +39,14 @@ void SPpu::write(uint8_t reg, uint8_t v) {
                    scroll_latch_ = v; break;
         case 0x12: bg3vofs_ = static_cast<uint16_t>((v << 8) | scroll_latch_) & 0x3FF;
                    scroll_latch_ = v; break;
+        case 0x1A: m7sel_ = v; break;
+        // $211B-$2120 share one write-twice latch: value = new<<8 | prev.
+        case 0x1B: m7a_ = static_cast<int16_t>((v << 8) | m7_latch_); m7_latch_ = v; break;
+        case 0x1C: m7b_ = static_cast<int16_t>((v << 8) | m7_latch_); m7_latch_ = v; break;
+        case 0x1D: m7c_ = static_cast<int16_t>((v << 8) | m7_latch_); m7_latch_ = v; break;
+        case 0x1E: m7d_ = static_cast<int16_t>((v << 8) | m7_latch_); m7_latch_ = v; break;
+        case 0x1F: m7cx_ = sign13(static_cast<uint16_t>((v << 8) | m7_latch_)); m7_latch_ = v; break;
+        case 0x20: m7cy_ = sign13(static_cast<uint16_t>((v << 8) | m7_latch_)); m7_latch_ = v; break;
         case 0x15: vmain_ = v; break;
         case 0x16: vmadd_ = (vmadd_ & 0xFF00) | v; break;
         case 0x17: vmadd_ = static_cast<uint16_t>((v << 8) | (vmadd_ & 0x00FF)); break;
@@ -131,6 +147,46 @@ void SPpu::fetch_bg_pixel(int bg, int x, int y, Pixel& out) {
     out.layer = static_cast<uint8_t>(bg);
 }
 
+// Mode 7: BG1 becomes a 128x128-tile 8bpp rotated/scaled plane. VRAM words
+// interleave the map (low bytes, addr = ty*128+tx) and char data (high bytes,
+// addr = tile*64 + row*8 + col). The per-line origin uses the hardware's
+// odd 10-bit clip and 6-bit truncation (matches bsnes/snes9x).
+void SPpu::fetch_mode7_pixel(int x, int y, Pixel& out) {
+    out.color_idx = 0;
+    int sx = x, sy = y + 1;              // fb row y = scanline y+1
+    if (m7sel_ & 0x01) sx = 255 - sx;
+    if (m7sel_ & 0x02) sy = 255 - sy;
+
+    auto clip = [](int n) { return (n & 0x2000) ? (n | ~0x3FF) : (n & 0x3FF); };
+    const int a = m7a_, b = m7b_, c = m7c_, d = m7d_;
+    const int hoff = clip(m7hofs_ - m7cx_), voff = clip(m7vofs_ - m7cy_);
+    const int ox = ((a * hoff) & ~63) + ((b * voff) & ~63) + ((b * sy) & ~63) +
+                   (m7cx_ << 8);
+    const int oy = ((c * hoff) & ~63) + ((d * voff) & ~63) + ((d * sy) & ~63) +
+                   (m7cy_ << 8);
+    int px = (ox + a * sx) >> 8;
+    int py = (oy + c * sx) >> 8;
+
+    int tile;
+    if ((px | py) & ~1023) {             // outside the 1024x1024 plane
+        switch (m7sel_ >> 6) {
+            case 2: return;              // transparent
+            case 3: tile = 0; break;     // repeat tile 0
+            default: px &= 1023; py &= 1023; tile = -1; break;  // wrap
+        }
+    } else {
+        tile = -1;
+    }
+    if (tile < 0)
+        tile = vram_[(((py >> 3) * 128 + (px >> 3)) * 2) & 0xFFFF];
+    const uint8_t color =
+        vram_[((tile * 64 + (py & 7) * 8 + (px & 7)) * 2 + 1) & 0xFFFF];
+    if (color == 0) return;
+    out.color_idx = color;               // direct 256-colour
+    out.layer = kBG1;
+    out.prio = 0;
+}
+
 bool SPpu::fetch_obj_pixel(int x, int y, Pixel& out) {
     // OBSEL: name base (bits 0-2), size mode (bits 5-7). KORA: 8x8 / 16x16.
     const uint16_t obj_base = static_cast<uint16_t>((obsel_ & 7) << 13);
@@ -188,9 +244,13 @@ bool SPpu::fetch_obj_pixel(int x, int y, Pixel& out) {
 SPpu::Pixel SPpu::resolve_screen(uint8_t mask, int x, int y) {
     Pixel bg1{0, kBACK, 0}, bg2{0, kBACK, 0}, bg3{0, kBACK, 0}, obj{0, kBACK, 0};
     bool has_obj = false;
-    if (mask & 0x01) fetch_bg_pixel(0, x, y, bg1);
-    if (mask & 0x02) fetch_bg_pixel(1, x, y, bg2);
-    if (mask & 0x04) fetch_bg_pixel(2, x, y, bg3);
+    const bool mode7 = (bgmode_ & 7) == 7;
+    if (mask & 0x01) {
+        if (mode7) fetch_mode7_pixel(x, y, bg1);
+        else fetch_bg_pixel(0, x, y, bg1);
+    }
+    if (!mode7 && (mask & 0x02)) fetch_bg_pixel(1, x, y, bg2);
+    if (!mode7 && (mask & 0x04)) fetch_bg_pixel(2, x, y, bg3);
     if (mask & 0x10) has_obj = fetch_obj_pixel(x, y, obj);
 
     const bool bg3_prio_mode = bgmode_ & 0x08;

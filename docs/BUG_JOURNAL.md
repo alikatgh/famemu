@@ -56,6 +56,12 @@ script name → one-line "what bug it was built to catch".
 
 Newest first. Five lines max per entry. File:line citations beat prose.
 
+### 2026-07-14 · Golden CRCs regenerated with a stale test binary "passed" garbage
+Symptom: 5 of 6 new mode7.sfc golden entries shared one CRC despite visually distinct screens; ctest still green.
+Cause: after the Mode 7 PPU change I rebuilt only snes_dump; snes_golden_test --gen (and the verify run) used the PRE-Mode7 binary, baking its garbage screens in as goldens.
+Fix: `cmake --build . -j8` (all targets) before any --gen; regenerated — 6 distinct CRCs.
+**Lesson:** regenerating goldens with a stale binary is self-licking — always full-rebuild before --gen, and eyeball that supposedly-different cases produce different CRCs (identical CRCs across distinct scenes = the tool didn't see your change).
+
 ### 2026-07-14 · SNES BG rendered one scanline low (scanline 0 is never displayed)
 Symptom: kora.sfc famemu frame == snes9x frame rolled up 1px (33% pixel mismatch, dy=-1 → mean diff 1.1).
 Cause: sppu.cpp fetch_bg_pixel sampled BG line y+VOFS for fb row y; hardware shows scanlines 1-224, so fb row y is scanline y+1.
