@@ -61,6 +61,20 @@ Priority: (1) NES gate 5 parity → (2) APU → (3) mappers+KORA proto →
 - No user questions until morning — pick sensible defaults, note them here.
 - Clean-room discipline: NESdev/SNESdev docs + test ROMs only, no GPL source.
 
+## SNES-system completion pass (post-night session)
+- [x] 65816 hardened: peterlemon 13-ROM CPU suite (all addressing modes,
+  binary + BCD, 8/16-bit) — every ROM reaches its final page all-PASS,
+  final screens match snes9x. BCD ADC/SBC implemented (V from the top
+  digit's pre-adjustment sum, proven by CPUADC $49+$51 -> $00 V=1).
+- [x] PPU Mode 0 (all-2bpp, per-BG palette bases).
+- [x] DSP 4-tap Catmull-Rom interpolation (HF/RMS 0.104 -> 0.087).
+- [x] snes_golden_test: framebuffer-CRC regression manifest (13 CPU ROMs +
+  KORA boot). ctest 15/15.
+- [x] Color-math "divergence" vs snes9x REFUTED by measurement: world/HUD
+  channel means within 1-2/255 at the same absolute frame.
+- Still open (game doesn't use them yet): Mode 7, HDMA; SNES per-cycle
+  timing model; Gaussian hardware table (Catmull-Rom stands in).
+
 ## Status board
 - [x] Gate 1: 6502 passes nestest 8991/8991 (commit c79c61f)
 - [x] PPU (dot-driven, Loopy, sprite-0) + system + FamemuCoreAPI facade
