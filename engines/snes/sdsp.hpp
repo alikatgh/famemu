@@ -60,6 +60,7 @@ private:
         bool decoded_valid = false;
         uint32_t frac = 0;          // pitch accumulator (12.4-ish)
         int sample_pos = 0;         // 0..15 in decoded block
+        int16_t taps[4] = {0,0,0,0};  // sliding window for 4-tap interp
         // envelope
         enum Phase { Off, Attack, Decay, Sustain, Release } phase = Off;
         int env = 0;                // 0..0x7FF

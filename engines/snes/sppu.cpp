@@ -64,7 +64,10 @@ void SPpu::fetch_bg_pixel(int bg, int x, int y, Pixel& out) {
     out.color_idx = 0;
     const bool is_bg1 = (bg == 0);
     const uint8_t sc = is_bg1 ? bg1sc_ : bg3sc_;
-    const int bpp = is_bg1 ? 4 : 2;
+    // Mode 0: every BG is 2bpp (BG1 palette base 0, BG3 base 64).
+    // Mode 1: BG1 4bpp, BG3 2bpp (KORA's mode). Others: treated as mode 1.
+    const int mode = bgmode_ & 7;
+    const int bpp = (mode == 0) ? 2 : (is_bg1 ? 4 : 2);
     // $210B/$210C: LOW nibble = BG1/BG3, high nibble = BG2/BG4.
     const uint16_t tile_base =
         static_cast<uint16_t>(((is_bg1 ? bg12nba_ : bg34nba_) & 0x0F) << 12);
@@ -104,9 +107,14 @@ void SPpu::fetch_bg_pixel(int bg, int x, int y, Pixel& out) {
     }
     if (idx == 0) return;  // transparent
 
-    // Palette: mode-1 BG1 uses 16-color palettes, BG3 4-color.
-    out.color_idx = static_cast<uint8_t>(
-        is_bg1 ? pal * 16 + idx : pal * 4 + idx);
+    // Palette mapping: 4bpp = 16-color palettes; 2bpp = 4-color palettes,
+    // with mode-0's per-BG base offset (BG1 +0, BG3 +64).
+    if (bpp == 4) {
+        out.color_idx = static_cast<uint8_t>(pal * 16 + idx);
+    } else {
+        const int base = (mode == 0 && !is_bg1) ? 64 : 0;
+        out.color_idx = static_cast<uint8_t>(base + pal * 4 + idx);
+    }
     out.layer = is_bg1 ? kBG1 : kBG3;
 }
 

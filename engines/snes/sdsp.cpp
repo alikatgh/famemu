@@ -118,18 +118,17 @@ int SDsp::voice_sample(int vi) {
     if (!vc.active) return 0;
     if (!vc.decoded_valid) decode_block(vc);
 
-    // linear interpolation between current and next sample
-    const int i0 = vc.sample_pos;
-    int s0 = vc.decoded[i0];
-    int s1;
-    if (i0 == 15) {
-        // peek next block's first sample cheaply: use current (slight step)
-        s1 = s0;
-    } else {
-        s1 = vc.decoded[i0 + 1];
-    }
-    const int frac = vc.frac & 0xFFF;
-    int sample = s0 + (((s1 - s0) * frac) >> 12);
+    // 4-tap Catmull-Rom over a sliding sample window (approximates the
+    // hardware's 4-point Gaussian without copying its dumped table; smooth
+    // across BRR block boundaries, unlike the old linear interp).
+    const double t = (vc.frac & 0xFFF) / 4096.0;
+    const double p0 = vc.taps[0], p1 = vc.taps[1], p2 = vc.taps[2], p3 = vc.taps[3];
+    double interp = p1 + 0.5 * t * (p2 - p0 +
+                    t * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3 +
+                    t * (3.0 * (p1 - p2) + p3 - p0)));
+    int sample = static_cast<int>(interp);
+    if (sample > 0x7FFF) sample = 0x7FFF;
+    if (sample < -0x8000) sample = -0x8000;
 
     // advance by pitch
     const uint16_t pitch = static_cast<uint16_t>(
@@ -137,6 +136,11 @@ int SDsp::voice_sample(int vi) {
     vc.frac += pitch;
     while (vc.frac >= 0x1000) {
         vc.frac -= 0x1000;
+        // slide the interpolation window by one source sample
+        vc.taps[0] = vc.taps[1];
+        vc.taps[1] = vc.taps[2];
+        vc.taps[2] = vc.taps[3];
+        vc.taps[3] = vc.decoded[vc.sample_pos];
         if (++vc.sample_pos >= 16) {
             vc.sample_pos = 0;
             const uint8_t hdr = aram_[vc.brr_addr];

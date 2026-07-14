@@ -151,6 +151,7 @@ private:
 
     // ALU
     void adc(uint16_t v);
+    void adc_decimal(uint16_t v, bool subtract);
     void sbc(uint16_t v);
     void cmp_gen(uint16_t reg, uint16_t v, bool is8);
     void branch(bool cond);

@@ -40,6 +40,10 @@ public:
 
     void render_line(int y);                 // y in [0, 223]
     const uint8_t* framebuffer() const { return fb_; }  // RGB888
+    // debug: color-math state
+    void dbg_colormath(uint8_t* out4) const {
+        out4[0] = cgadsub_; out4[1] = coldata_r_; out4[2] = coldata_g_; out4[3] = coldata_b_;
+    }
 
     template <class S>
     void serialize(S& s) {

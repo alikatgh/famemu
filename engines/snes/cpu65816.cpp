@@ -38,7 +38,7 @@ void Cpu65816::irq() {
 }
 
 void Cpu65816::adc(uint16_t v) {
-    // Binary only (see file header).
+    if (p & D) { adc_decimal(v, false); return; }
     if (m8()) {
         uint8_t a8 = static_cast<uint8_t>(a), v8 = static_cast<uint8_t>(v);
         uint16_t sum = static_cast<uint16_t>(a8 + v8 + ((p & C) ? 1 : 0));
@@ -57,7 +57,49 @@ void Cpu65816::adc(uint16_t v) {
     }
 }
 
-void Cpu65816::sbc(uint16_t v) { adc(m8() ? (v ^ 0xFF) : (v ^ 0xFFFF)); }
+// Decimal mode, nibble-chained like the silicon; the subtract path receives
+// the operand pre-inverted (borrow style) and corrects downward.
+void Cpu65816::adc_decimal(uint16_t v, bool subtract) {
+    const int digits = m8() ? 2 : 4;
+    const uint16_t av = m8() ? (a & 0xFF) : a;
+    if (subtract) v = m8() ? (v ^ 0xFF) : (v ^ 0xFFFF);
+    uint32_t result = 0;
+    uint32_t carry = (p & C) ? 1 : 0;
+    const uint32_t sign = m8() ? 0x80 : 0x8000;
+    bool v_flag = false;
+    for (int d = 0; d < digits; ++d) {
+        const int shift = d * 4;
+        uint32_t sum = ((av >> shift) & 0xF) + ((v >> shift) & 0xF) + carry;
+        if (d == digits - 1) {
+            // V is derived from the top digit's PRE-adjustment binary sum
+            // (verified by CPUADC.sfc: $49+$51 BCD -> $00 with V=1).
+            const uint32_t inter = (sum << shift) & sign;
+            v_flag = ((~(av ^ v)) & (av ^ inter) & sign) != 0;
+        }
+        if (!subtract) {
+            if (sum > 9) sum += 6;
+            carry = sum > 0xF;
+        } else {
+            if (sum <= 0xF) sum -= 6;     // borrow correction
+            carry = sum > 0xF;            // (sum wrapped if borrowed)
+        }
+        result |= (sum & 0xF) << shift;
+    }
+    setFlag(V, v_flag);
+    setFlag(C, carry != 0);
+    if (m8()) {
+        a = (a & 0xFF00) | (result & 0xFF);
+        setZN8(static_cast<uint8_t>(result));
+    } else {
+        a = static_cast<uint16_t>(result);
+        setZN16(static_cast<uint16_t>(result));
+    }
+}
+
+void Cpu65816::sbc(uint16_t v) {
+    if (p & D) { adc_decimal(v, true); return; }
+    adc(m8() ? (v ^ 0xFF) : (v ^ 0xFFFF));
+}
 
 void Cpu65816::cmp_gen(uint16_t reg, uint16_t v, bool is8) {
     if (is8) {
