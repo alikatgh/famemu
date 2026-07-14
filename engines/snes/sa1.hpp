@@ -3,9 +3,12 @@
 // with the S-CPU, mailbox/IRQ ports, the arithmetic unit (mul/div/
 // cumulative), normal DMA, and variable-length bit reads.
 //
-// Clean-room from public documentation (fullsnes). Not yet implemented:
-// character-conversion DMA types 1/2, H/V timers, bitmap-projected BW-RAM
-// views (banks 50-6F) — each logs once on first use.
+// Clean-room from public documentation (fullsnes). Includes character-
+// conversion DMA (type 1 on-the-fly for S-CPU DMA reads of the $6000
+// window, type 2 via the BRF pixel registers) and the bitmap-projected
+// BW-RAM views (banks $60-6F as 2/4-bit pixels, BBF-selected; the SA-1
+// $6000 window projects there with BMAP bit 7). Not yet implemented: H/V
+// timers (logs once on first use).
 #pragma once
 
 #include <cstdint>
@@ -39,6 +42,11 @@ public:
         dcnt_ = cdma_ = 0;
         sda_ = dda_ = 0;
         dtc_ = 0;
+        bbf_ = 0;
+        std::memset(brf_, 0, sizeof brf_);
+        std::memset(cc_staging_, 0, sizeof cc_staging_);
+        cc2_slot_ = 0;
+        cc1_armed_ = false;
         vbd_ = 0x10;
         vda_ = 0;
         vbit_ = 0;
@@ -75,6 +83,7 @@ public:
         s.io(mmc_); s.io(bmaps_); s.io(bmap_);
         s.io(mcnt_); s.io(ma_); s.io(mb_); s.io(mr_); s.io(overflow_);
         s.io(dcnt_); s.io(cdma_); s.io(sda_); s.io(dda_); s.io(dtc_);
+        s.io(bbf_); s.io(brf_); s.io(cc_staging_); s.io(cc2_slot_); s.io(cc1_armed_);
         s.io(vbd_); s.io(vda_); s.io(vbit_);
         s.io(sfr_flags_); s.io(cfr_flags_); s.io(running_);
     }
@@ -95,6 +104,11 @@ private:
     uint8_t dcnt_, cdma_;
     uint32_t sda_, dda_;
     uint16_t dtc_;
+    uint8_t bbf_ = 0;              // $223F: bitmap-view depth (0=4bpp, 1=2bpp)
+    uint8_t brf_[16];              // $2240-4F: CC2 pixel registers
+    uint8_t cc_staging_[128];      // CC2: 8 stashed 16-pixel groups
+    uint8_t cc2_slot_ = 0;         // CC2 $224F write counter (0-7)
+    bool cc1_armed_ = false;       // CC1: set on $2236, cleared by CHDEND
     uint8_t vbd_;
     uint32_t vda_;
     uint32_t vbit_;
@@ -158,11 +172,45 @@ private:
         }
     }
 
+    // Bitmap-projected BW-RAM: banks $60-6F address 2- or 4-bit pixels.
+    uint8_t bitmap_read(uint32_t a) const {
+        if (bbf_ & 0x80) {                             // 2 bits per address
+            const uint8_t b = bwram()[(a >> 2) & bwram_mask()];
+            return static_cast<uint8_t>((b >> ((a & 3) * 2)) & 3);
+        }
+        const uint8_t b = bwram()[(a >> 1) & bwram_mask()];
+        return static_cast<uint8_t>((a & 1) ? (b >> 4) : (b & 0x0F));
+    }
+    void bitmap_write(uint32_t a, uint8_t v) {
+        if (bbf_ & 0x80) {
+            uint8_t& b = bwram()[(a >> 2) & bwram_mask()];
+            const int sh = (a & 3) * 2;
+            b = static_cast<uint8_t>((b & ~(3 << sh)) | ((v & 3) << sh));
+            return;
+        }
+        uint8_t& b = bwram()[(a >> 1) & bwram_mask()];
+        if (a & 1) b = static_cast<uint8_t>((b & 0x0F) | ((v & 0x0F) << 4));
+        else b = static_cast<uint8_t>((b & 0xF0) | (v & 0x0F));
+    }
+
+    int cc_depth() const {
+        switch (cdma_ & 3) { case 0: return 8; case 1: return 4; default: return 2; }
+    }
+    void cc2_convert();                     // staged pixels -> planar IRAM
+
+public:
+    bool cc1_armed() const { return cc1_armed_; }
+    // Convert `count` bytes of the CC1 bitmap stream starting at the S-CPU
+    // DMA A-address (banks $40-4F) into planar tile data.
+    void cc1_convert(uint32_t a24, uint8_t* out, uint32_t count) const;
+
+private:
+
     void do_dma() {
         const bool src_rom = (dcnt_ & 3) == 0;
         const bool src_bw = (dcnt_ & 3) == 1;
         const bool dst_bw = dcnt_ & 0x04;
-        if (dcnt_ & 0x20) { log_once("character-conversion DMA"); return; }
+        if (dcnt_ & 0x20) return;           // char conversion: no normal DMA
         for (uint32_t i = 0; i < dtc_; ++i) {
             uint8_t v;
             const uint32_t s = sda_ + i;

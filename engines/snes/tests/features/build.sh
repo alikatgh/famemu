@@ -29,3 +29,7 @@ build hirom.s hirom64.cfg hirom.sfc FFC0
 build sa1.s sa1rom.cfg sa1.sfc 7FC0
 build sfx.s sfxrom.cfg sfx.sfc 7FC0
 build sprlimit.s ../mode7/lorom32.cfg sprlimit.sfc 7FC0
+build hires.s ../mode7/lorom32.cfg hires.sfc 7FC0
+build raster.s ../mode7/lorom32.cfg raster.sfc 7FC0
+build dsp1.s ../mode7/lorom32.cfg dsp1.sfc 7FC0
+build dsp2.s ../mode7/lorom32.cfg dsp2.sfc 7FC0

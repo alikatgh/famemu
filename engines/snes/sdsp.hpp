@@ -1,7 +1,7 @@
-// famemu SNES engine — S-DSP: 8 BRR voices, ADSR/GAIN envelopes, echo with
-// FIR (KORA uses tap 0 only, all 8 implemented), 32 kHz stereo output.
-// Linear interpolation instead of the hardware's 4-tap Gaussian for now —
-// audibly close for these synth instruments; noted for a fidelity pass.
+// famemu SNES engine — S-DSP: 8 BRR voices, ADSR + GAIN envelopes, noise
+// (NON, 15-bit LFSR at the FLG rate), pitch modulation (PMON), 4-tap
+// Gaussian interpolation (hardware table structure; kernel computed, not
+// dumped), echo with 8-tap FIR, ENDX/OUTX/ENVX readback, 32 kHz stereo.
 #pragma once
 
 #include <cstdint>
@@ -23,6 +23,9 @@ public:
         echo_pos_ = 0;
         std::memset(fir_ring_, 0, sizeof fir_ring_);
         fir_idx_ = 0;
+        noise_lfsr_ = 0x4000;
+        noise_counter_ = 0;
+        std::memset(voice_out_, 0, sizeof voice_out_);
     }
 
     uint8_t read(uint8_t addr) { return regs_[addr & 0x7F]; }
@@ -33,6 +36,7 @@ public:
     template <class S>
     void serialize(S& s) {
         s.io(regs_); s.io(voices_); s.io(echo_pos_); s.io(fir_ring_); s.io(fir_idx_);
+        s.io(noise_lfsr_); s.io(noise_counter_); s.io(voice_out_);
     }
     void post_load() { rd_ = wr_ = 0; }
 
@@ -75,11 +79,15 @@ private:
     int echo_pos_;
     int16_t fir_ring_[8][2];
     int fir_idx_;
+    uint16_t noise_lfsr_;
+    int noise_counter_;
+    int16_t voice_out_[8];        // post-envelope outputs, for PMON/OUTX
 
     void key_on(int v);
     void decode_block(Voice& vc);
     int voice_sample(int vi);
     void env_step(int vi);
+    void noise_step();
 };
 
 }  // namespace famemu::snes

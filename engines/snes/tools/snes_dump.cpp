@@ -79,6 +79,14 @@ int main(int argc, char** argv) {
                 while ((got = sys.read_audio(chunk, 2048)) > 0)
                     pcm.insert(pcm.end(), chunk, chunk + got * 2);
             }
+            if (getenv("SNES_DEBUG_SLOTS")) {
+                std::fprintf(stderr, "f=%d slots:", frame);
+                for (int zi = 0; zi < 12; ++zi)
+                    std::fprintf(stderr, " %04X",
+                                 sys.wram_byte(2 + zi * 2) |
+                                 (sys.wram_byte(3 + zi * 2) << 8));
+                std::fprintf(stderr, "\n");
+            }
             if (getenv("SNES_DEBUG_ZP"))
                 { uint8_t cm[8]; sys.ppu().dbg_colormath(cm);
                 std::fprintf(stderr, "f=%d mode=%d gstate=%d pos=%d,%d pc=%02X:%04X song=%d cgadsub=%02X coldata=%d,%d,%d ts=%02X cgwsel=%02X bg2sc=%02X bg12nba=%02X\n",
@@ -91,9 +99,10 @@ int main(int argc, char** argv) {
         if (frames > 0) {
             std::snprintf(path, sizeof path, "%s_%04d.ppm", prefix.c_str(), frame);
             if (std::FILE* out = std::fopen(path, "wb")) {
-                std::fprintf(out, "P6\n%d %d\n255\n", SPpu::kWidth, SPpu::kHeight);
+                const int fw = sys.ppu().width();
+                std::fprintf(out, "P6\n%d %d\n255\n", fw, SPpu::kHeight);
                 std::fwrite(sys.framebuffer(), 1,
-                            static_cast<size_t>(SPpu::kWidth) * SPpu::kHeight * 3, out);
+                            static_cast<size_t>(fw) * SPpu::kHeight * 3, out);
                 std::fclose(out);
                 ++dumped;
             }

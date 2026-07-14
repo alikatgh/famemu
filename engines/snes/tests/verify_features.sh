@@ -69,4 +69,21 @@ check_frame sfx.sfc sfx 120
 # OBJ range/time limit + drop-order probe (80 slivers on one line).
 check_frame sprlimit.sfc sprlimit 30
 
+# True 512-wide hires: mode 5 weave, then mode-1 pseudo-hires. (Case 2,
+# interlace, is golden-only: snes9x emits 448 rows there.)
+check_frame hires.sfc hires 40
+check_frame hires.sfc hires 104
+
+# DSP-1 HLE: sin, cos, radius, range, multiply match snes9x bit-for-bit.
+# (Inverse/rotate slots are golden-only: snes9x embeds the chip's dumped
+# table, whose quantization differs from our computed one by <=2 lsb.)
+for n in 16 48 144 176 240; do
+    check_frame dsp1.sfc dsp1 $n
+done
+
+# DSP-2 HLE: bitplane conversion, overlay, reverse, multiply, scale.
+for n in 16 48 80 112 144; do
+    check_frame dsp2.sfc dsp2 $n
+done
+
 exit $fail

@@ -10,8 +10,11 @@
 // DMA/HDMA steal CPU time at 8 master cycles/byte.
 //
 // Mapping: LoROM and HiROM, scored from the ROM header ($7FC0/$FFC0).
-// Coprocessors: SA-1 (sa1.hpp) and SuperFX/GSU (superfx.hpp), detected from
-// the header chip byte and interleaved with the main CPU per scanline.
+// Coprocessors, detected from the header chip byte: SA-1 (sa1.hpp) and
+// SuperFX/GSU (superfx.hpp) interleave with the main CPU per scanline;
+// DSP-1/DSP-2 (dsp1.hpp/dsp2.hpp) HLE the NEC uPD77C25 programs; Cx4
+// (cx4.hpp), S-DD1 (sdd1.hpp, full decompressor), SPC7110 (spc7110.hpp,
+// banking+RTC; decompression still stubbed), ST010 (st010.hpp).
 //
 // Audio: $2140-43 implement the IPL ROM's transfer protocol on the main-CPU
 // side, capturing the uploaded driver into real ARAM; the kickoff starts a
@@ -24,6 +27,12 @@
 #include <vector>
 
 #include "cpu65816.hpp"
+#include "dsp1.hpp"
+#include "cx4.hpp"
+#include "dsp2.hpp"
+#include "sdd1.hpp"
+#include "spc7110.hpp"
+#include "st010.hpp"
 #include "nes/state.hpp"
 #include "sdsp.hpp"
 #include "spc700.hpp"
@@ -37,9 +46,10 @@ class SuperFx;   // superfx.hpp
 class SnesSystem : public Bus16 {
 public:
     static constexpr int kLineCycles = 1364;   // master cycles per scanline
-    static constexpr int kLinesPerFrame = 262; // NTSC
+    static constexpr int kLinesPerFrame = 262; // NTSC (PAL runs 312)
 
     enum class Mapping : uint8_t { LoROM = 0, HiROM = 1 };
+    enum class Port2 : uint8_t { Pad = 0, Multitap = 1, SuperScope = 2 };
 
     SnesSystem();
     ~SnesSystem();
@@ -47,8 +57,17 @@ public:
     bool load_rom(const uint8_t* data, size_t len);
     void power_on();
 
+    // Pad 0 = port 1; pads 1-4 = port 2 (pads 2-4 need the multitap).
     void set_buttons(uint32_t famemu_core_buttons) { buttons_[0] = famemu_core_buttons; }
     void set_buttons2(uint32_t famemu_core_buttons) { buttons_[1] = famemu_core_buttons; }
+    void set_pad(int pad, uint32_t b) { if (pad >= 0 && pad < 5) buttons_[pad] = b; }
+    void set_port2(Port2 p) { port2_ = p; }
+    // Super Scope: beam position in screen pixels + button bits
+    // (bit0 fire, bit1 cursor, bit2 turbo, bit3 pause, bit4 offscreen).
+    void set_gun(int x, int y, uint8_t buttons) {
+        gun_x_ = x; gun_y_ = y; gun_buttons_ = buttons;
+    }
+    bool is_pal() const { return pal_; }
 
     void run_frame();
 
@@ -63,9 +82,12 @@ public:
     Mapping mapping() const { return mapping_; }
     bool has_sa1() const { return sa1_ != nullptr; }
     bool has_superfx() const { return sfx_ != nullptr; }
+    bool has_dsp() const { return dsp_kind_ != 0; }
+    bool has_cx4() const { return cx4_ != nullptr; }
+    bool has_sdd1() const { return sdd1_ != nullptr; }
 
     // ---- save states (same writer/reader as the NES engine) -------------
-    static constexpr uint32_t kStateMagic = 0x46534E32;  // "FSN2"
+    static constexpr uint32_t kStateMagic = 0x46534E33;  // "FSN3"
 
     size_t state_size() const;
     bool state_save(uint8_t* buf, size_t len);
@@ -113,10 +135,15 @@ private:
     uint16_t wrdiv_ = 0xFFFF;
     uint16_t rddiv_ = 0, rdmpy_ = 0;
     uint32_t wmadd_ = 0;           // $2181-83 WRAM data-port address (17-bit)
-    uint16_t joy_[2] = {0, 0};     // auto-read results ($4218-421B)
-    uint32_t buttons_[2] = {0, 0};
+    uint16_t joy_[4] = {0, 0, 0, 0};  // auto-read results ($4218-421F)
+    uint32_t buttons_[5] = {0, 0, 0, 0, 0};
     bool joy_strobe_ = false;
-    uint16_t joy_shift_[2] = {0, 0};
+    uint16_t joy_shift_[4] = {0, 0, 0, 0};  // port1 D0, port2 D0, p1 D1, p2 D1
+    Port2 port2_ = Port2::Pad;
+    uint8_t wrio_ = 0xFF;          // $4201 programmable I/O
+    bool pal_ = false;
+    int gun_x_ = 128, gun_y_ = 112;
+    uint8_t gun_buttons_ = 0;
     int autojoy_busy_ = 0;         // lines remaining
     uint8_t open_bus_ = 0;
     int line_ = 0;
@@ -135,6 +162,15 @@ private:
     // Coprocessors (owned; null unless the header names them).
     Sa1* sa1_ = nullptr;
     SuperFx* sfx_ = nullptr;
+    Dsp1 dsp1_;
+    Dsp2 dsp2_;
+    uint8_t dsp_kind_ = 0;         // 0 none, 1-4 = DSP-1..4 (NSRT detection)
+    bool dsp_hirom_map_ = false;
+    uint16_t dsp_boundary_ = 0xC000;
+    Cx4* cx4_ = nullptr;
+    Sdd1* sdd1_ = nullptr;
+    Spc7110* spc7110_ = nullptr;
+    St010* st010_ = nullptr;
 
     friend class Sa1;
     friend class SuperFx;
@@ -154,6 +190,9 @@ private:
 
     void latch_joypads();
     uint16_t pack_joy(uint32_t b) const;
+    uint16_t port2_d0() const;     // 16-bit serial report on port 2 data 0
+    uint16_t port2_d1() const;
+    uint16_t scope_report() const;
 
     uint8_t apu_read(int port);
     void apu_write(int port, uint8_t v);

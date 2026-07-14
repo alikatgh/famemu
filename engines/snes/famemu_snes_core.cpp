@@ -23,7 +23,7 @@ void snes_reset(void) { if (g_sys) g_sys->power_on(); }
 void snes_run_frame(void) { if (g_sys) g_sys->run_frame(); }
 
 const uint8_t* snes_video_rgb(int* w, int* h) {
-    if (w) *w = SPpu::kWidth;
+    if (w) *w = g_sys ? g_sys->ppu().width() : SPpu::kWidth;
     if (h) *h = SPpu::kHeight;
     return g_sys ? g_sys->framebuffer() : nullptr;  // already RGB888
 }
@@ -34,7 +34,7 @@ size_t snes_audio_read(int16_t* out, size_t max_frames) {
 int snes_sample_rate(void) { return famemu::snes::SDsp::kSampleRate; }
 
 void snes_set_input(int port, uint32_t buttons) {
-    if (g_sys && port == 0) g_sys->set_buttons(buttons);
+    if (g_sys) g_sys->set_pad(port, buttons);  // 0 = port 1; 1-4 = multitap
 }
 
 size_t snes_state_size(void) { return g_sys ? g_sys->state_size() : 0; }

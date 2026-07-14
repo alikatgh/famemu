@@ -194,8 +194,9 @@ uint8_t SPpu::read(uint8_t reg, uint8_t open_bus) {
         }
         case 0x3E:  // STAT77: OBJ time (bit7) / range (bit6) + PPU1 version
             return ppu1_mdr_ = static_cast<uint8_t>(stat77_ | (open_bus & 0x10));
-        case 0x3F: {  // STAT78: field, latch flag, NTSC, PPU2 version
+        case 0x3F: {  // STAT78: field, latch flag, region, PPU2 version
             uint8_t v = 0x03;                          // version
+            if (pal_) v |= 0x10;
             if (field_) v |= 0x80;
             if (hv_latched_) v |= 0x40;
             hv_latched_ = false;
@@ -210,6 +211,7 @@ uint8_t SPpu::read(uint8_t reg, uint8_t open_bus) {
 void SPpu::frame_start() {
     field_ = !field_;
     stat77_ &= 0x3F;                                   // range/time clear
+    width_ = 256;
 }
 
 void SPpu::vblank_begin() {
@@ -242,17 +244,16 @@ bool SPpu::window_state(int layer, int x) const {
 
 // ---- BG fetch --------------------------------------------------------------
 
-// Tilemap entry for pixel (sx, sy) given SC register and tile pixel size.
+// Tilemap entry for pixel (sx, sy) given SC register and tile pixel sizes.
 static uint16_t map_entry(const uint8_t* vram, uint8_t sc, int sx, int sy,
-                          int tsz) {
+                          int tszx, int tszy) {
     const uint16_t map_base = static_cast<uint16_t>((sc >> 2) << 10);
-    const int sh = (tsz == 16) ? 4 : 3;
-    const int tx = (sx >> sh) & 31, ty = (sy >> sh) & 31;
+    const int shx = (tszx == 16) ? 4 : 3, shy = (tszy == 16) ? 4 : 3;
+    const int tx = (sx >> shx) & 31, ty = (sy >> shy) & 31;
     int screen = 0;
     const int sc_size = sc & 3;
-    const int xbit = 0x100 << (sh - 3), ybit = xbit;
-    if ((sc_size & 1) && (sx & xbit)) screen += 1;
-    if ((sc_size & 2) && (sy & ybit)) screen += (sc_size & 1) ? 2 : 1;
+    if ((sc_size & 1) && (sx & (0x100 << (shx - 3)))) screen += 1;
+    if ((sc_size & 2) && (sy & (0x100 << (shy - 3)))) screen += (sc_size & 1) ? 2 : 1;
     const uint32_t w = static_cast<uint32_t>(map_base + screen * 0x400 + ty * 32 + tx);
     return static_cast<uint16_t>(vram[(w * 2) & 0xFFFF] | (vram[(w * 2 + 1) & 0xFFFF] << 8));
 }
@@ -273,14 +274,16 @@ void SPpu::fetch_bg_pixel(int bg, int x, int y, BgPix& out) {
     }
 
     uint16_t hofs = bghofs_[bg], vofs = bgvofs_[bg];
+    const bool m56 = (mode == 5 || mode == 6);   // x arrives in 512 subpixel space
 
     // Offset-per-tile (modes 2/4/6): BG3's tilemap holds per-column scroll
     // replacements for BG1/BG2, valid from the second visible tile column on.
     // The column decision includes the BG's own fine scroll (bsnes/snes9x).
-    const int optcx = x + (hofs & 7);
+    const int dotx = m56 ? (x >> 1) : x;         // 256-dot space for OPT
+    const int optcx = dotx + (hofs & 7);
     if ((mode == 2 || mode == 4 || mode == 6) && bg < 2 && optcx >= 8) {
         const int optx = (optcx & ~7) - 8 + (bghofs_[2] & 0x3F8);
-        const uint16_t e_h = map_entry(vram_, bg3sc_, optx, bgvofs_[2] & 0x3FF, 8);
+        const uint16_t e_h = map_entry(vram_, bg3sc_, optx, bgvofs_[2] & 0x3FF, 8, 8);
         const uint16_t apply_bit = (bg == 0) ? 0x2000 : 0x4000;
         if (mode == 4) {
             if (e_h & apply_bit) {
@@ -289,7 +292,7 @@ void SPpu::fetch_bg_pixel(int bg, int x, int y, BgPix& out) {
             }
         } else {
             const uint16_t e_v = map_entry(vram_, bg3sc_,
-                                           optx, (bgvofs_[2] + 8) & 0x3FF, 8);
+                                           optx, (bgvofs_[2] + 8) & 0x3FF, 8, 8);
             if (e_h & apply_bit)
                 hofs = static_cast<uint16_t>((hofs & 7) | (e_h & 0x3F8));
             if (e_v & apply_bit) vofs = e_v & 0x3FF;
@@ -304,27 +307,40 @@ void SPpu::fetch_bg_pixel(int bg, int x, int y, BgPix& out) {
     const uint16_t tile_base = static_cast<uint16_t>(nba << 12);
     const uint8_t sc = (bg == 0) ? bg1sc_ : (bg == 1) ? bg2sc_
                        : (bg == 2) ? bg3sc_ : bg4sc_;
-    // 16x16 tiles per BGMODE bits 4-7 (modes 5/6 force 16-wide tiles).
-    const bool big = (bgmode_ & (0x10 << bg)) || mode == 5 || mode == 6;
-    const int tsz = big ? 16 : 8;
+    // 16x16 tiles per BGMODE bits 4-7; modes 5/6 force 16-WIDE tiles (their
+    // height still follows the size bit).
+    const bool big = bgmode_ & (0x10 << bg);
+    const int tszx = (big || m56) ? 16 : 8;
+    const int tszy = big ? 16 : 8;
 
-    const int sx = (x + hofs) & 0x3FF;
+    int sx, sy;
+    if (m56) {
+        // Hires: x is a 512 subpixel; HOFS scrolls in subpixel pairs.
+        sx = (x + (hofs << 1)) & 0x7FF;
+    } else {
+        sx = (x + hofs) & 0x3FF;
+    }
     // fb row y is hardware scanline y+1 (the PPU never displays scanline 0),
     // so BG sampling is offset by one; OBJ needs no offset because OAM Y is
     // itself "appears one line below Y", which cancels in fb-row space.
-    const int sy = (y + 1 + vofs) & 0x3FF;
+    if (m56 && (setini_ & 0x02)) {
+        // BG interlace: sample this field's line of the 448-line grid.
+        sy = (y * 2 + (field_ ? 1 : 0) + 1 + vofs) & 0x3FF;
+    } else {
+        sy = (y + 1 + vofs) & 0x3FF;
+    }
 
-    const uint16_t entry = map_entry(vram_, sc, sx, sy, tsz);
+    const uint16_t entry = map_entry(vram_, sc, sx, sy, tszx, tszy);
     const int tile = entry & 0x3FF;
     const int pal = (entry >> 10) & 7;
     const bool xflip = entry & 0x4000, yflip = entry & 0x8000;
     out.prio = (entry & 0x2000) ? 1 : 0;
     out.pal = static_cast<uint8_t>(pal);
 
-    int cx = sx & (tsz - 1);
-    if (xflip) cx = tsz - 1 - cx;
-    int cy = sy & (tsz - 1);
-    if (yflip) cy = tsz - 1 - cy;
+    int cx = sx & (tszx - 1);
+    if (xflip) cx = tszx - 1 - cx;
+    int cy = sy & (tszy - 1);
+    if (yflip) cy = tszy - 1 - cy;
     const int t = (tile + (cx >> 3) + (cy >> 3) * 16) & 0x3FF;
     const int row = cy & 7, col = cx & 7;
 
@@ -529,7 +545,7 @@ const Ent kM7e[] = {{4,3},{4,2},{1,1},{4,1},{0,0},{4,0},{1,0}};
 }  // namespace
 
 SPpu::Pixel SPpu::resolve_screen(uint8_t designation, uint8_t win_mask,
-                                 int x, int y, BgPix* bp, bool* bd) {
+                                 int x, int wx, int y, BgPix* bp, bool* bd) {
     const int mode = bgmode_ & 7;
     const Ent* tab;
     int n;
@@ -546,9 +562,9 @@ SPpu::Pixel SPpu::resolve_screen(uint8_t designation, uint8_t win_mask,
     for (int i = 0; i < n; ++i) {
         const int l = tab[i].layer;
         if (!(designation & (1 << l))) continue;
-        if ((win_mask & (1 << l)) && window_state(l, x)) continue;
+        if ((win_mask & (1 << l)) && window_state(l, wx)) continue;
         if (l == kOBJ) {
-            const ObjPix& op = obj_line_[x];
+            const ObjPix& op = obj_line_[wx];
             if (!op.opaque || op.prio != tab[i].prio) continue;
             Pixel out;
             out.c15 = cg_color(op.color_idx);
@@ -578,21 +594,55 @@ SPpu::Pixel SPpu::resolve_screen(uint8_t designation, uint8_t win_mask,
 }
 
 void SPpu::render_line(int y) {
-    uint8_t* row = fb_ + static_cast<size_t>(y) * kWidth * 3;
+    begin_line(y);
+    finish_line();
+}
+
+void SPpu::begin_line(int y) {
+    // A hires line (modes 5/6 or pseudo-hires) flips the frame to 512 wide,
+    // re-expanding rows already rendered this frame.
+    if (hires_mode() && !(inidisp_ & 0x80) && width_ == 256) {
+        expand_rows_to_512(y);
+        width_ = 512;
+    }
+    line_y_ = y;
+    line_dot_ = 0;
+    evaluate_objects(y);
+}
+
+void SPpu::finish_line() {
+    if (line_y_ < 0) return;
+    render_segment(line_dot_, 256);
+    line_y_ = -1;
+    line_dot_ = 0;
+}
+
+// Render pixels [a, b) of the open line with the CURRENT register state —
+// called once per line normally, more often when the CPU writes $21xx
+// mid-scanline (raster effects).
+void SPpu::render_segment(int a, int b) {
+    if (a >= b) return;
+    const int y = line_y_;
+    uint8_t* row = fb_ + static_cast<size_t>(y) * width_ * 3;
+    const int sub_px = (width_ == 512) ? 2 : 1;
     if (inidisp_ & 0x80) {  // force blank
-        std::memset(row, 0, kWidth * 3);
+        std::memset(row + a * 3 * sub_px, 0,
+                    static_cast<size_t>(b - a) * 3 * sub_px);
         return;
     }
-    evaluate_objects(y);
+    if (width_ == 512) {
+        render_line_512_segment(y, row, a, b);
+        return;
+    }
     const float bright = static_cast<float>(inidisp_ & 0x0F) / 15.0f;
     const bool sub_used = (cgwsel_ & 0x02) != 0;
     const uint8_t clip_mode = cgwsel_ >> 6;
     const uint8_t math_mode = (cgwsel_ >> 4) & 3;
 
-    for (int x = 0; x < kWidth; ++x) {
+    for (int x = a; x < b; ++x) {
         BgPix bgpix[4];
         bool bgdone[4] = {false, false, false, false};
-        const Pixel px = resolve_screen(tm_, tmw_, x, y, bgpix, bgdone);
+        const Pixel px = resolve_screen(tm_, tmw_, x, x, y, bgpix, bgdone);
 
         // Color window: clip-to-black and math-enable regions (CGWSEL).
         const bool mwin = window_state(5, x);
@@ -624,7 +674,7 @@ void SPpu::render_line(int y) {
             int sr = coldata_r_, sg = coldata_g_, sb = coldata_b_;
             bool half = cgadsub_ & 0x40;
             if (sub_used) {
-                const Pixel sub = resolve_screen(ts_, tsw_, x, y, bgpix, bgdone);
+                const Pixel sub = resolve_screen(ts_, tsw_, x, x, y, bgpix, bgdone);
                 if (sub.valid) {
                     sr = sub.c15 & 0x1F;
                     sg = (sub.c15 >> 5) & 0x1F;
@@ -651,6 +701,119 @@ void SPpu::render_line(int y) {
         row[x * 3 + 0] = static_cast<uint8_t>((r << 3 | r >> 2) * bright);
         row[x * 3 + 1] = static_cast<uint8_t>((g << 3 | g >> 2) * bright);
         row[x * 3 + 2] = static_cast<uint8_t>((b << 3 | b >> 2) * bright);
+    }
+}
+
+void SPpu::expand_rows_to_512(int upto_y) {
+    for (int r = upto_y - 1; r >= 0; --r) {
+        const uint8_t* src = fb_ + static_cast<size_t>(r) * 256 * 3;
+        uint8_t* dst = fb_ + static_cast<size_t>(r) * 512 * 3;
+        for (int x = 255; x >= 0; --x) {
+            const uint8_t p0 = src[x * 3], p1 = src[x * 3 + 1], p2 = src[x * 3 + 2];
+            dst[x * 6 + 0] = p0; dst[x * 6 + 1] = p1; dst[x * 6 + 2] = p2;
+            dst[x * 6 + 3] = p0; dst[x * 6 + 4] = p1; dst[x * 6 + 5] = p2;
+        }
+    }
+}
+
+// 512-wide line: hardware shows the SUB screen on even subpixels and the
+// MAIN screen on odd ones. Modes 5/6 fetch BGs at 512 resolution; pseudo-
+// hires (SETINI bit 3) weaves the two 256-wide screens. A non-hires line
+// inside a 512 frame just doubles the main pixel.
+void SPpu::render_line_512(int y, uint8_t* row) {
+    render_line_512_segment(y, row, 0, 256);
+}
+
+void SPpu::render_line_512_segment(int y, uint8_t* row, int a, int b) {
+    const float bright = static_cast<float>(inidisp_ & 0x0F) / 15.0f;
+    const int mode = bgmode_ & 7;
+    const bool m56 = (mode == 5 || mode == 6);
+    const bool hires = hires_mode();
+    const bool sub_used = (cgwsel_ & 0x02) != 0;
+    const uint8_t clip_mode = cgwsel_ >> 6;
+    const uint8_t math_mode = (cgwsel_ >> 4) & 3;
+
+    for (int dot = a; dot < b; ++dot) {
+        BgPix bgpix_m[4], bgpix_s[4];
+        bool bgdone_m[4] = {false, false, false, false};
+        bool bgdone_s[4] = {false, false, false, false};
+        const int fx_main = m56 ? dot * 2 + 1 : dot;
+        const int fx_sub = m56 ? dot * 2 : dot;
+        // Modes 5/6 fetch main and sub at different subpixels: separate
+        // caches. Pseudo-hires shares the fetch space, so share the cache.
+        BgPix* bps = m56 ? bgpix_s : bgpix_m;
+        bool* bds = m56 ? bgdone_s : bgdone_m;
+
+        const Pixel px = resolve_screen(tm_, tmw_, fx_main, dot, y,
+                                        bgpix_m, bgdone_m);
+        Pixel sub;
+        if (hires) {
+            sub = resolve_screen(ts_, tsw_, fx_sub, dot, y, bps, bds);
+        } else {
+            sub = px;                       // plain line in a 512 frame
+        }
+
+        const bool mwin = window_state(5, dot);
+        const bool clipped =
+            clip_mode == 3 || (clip_mode == 2 && mwin) || (clip_mode == 1 && !mwin);
+        const bool math_ok =
+            math_mode == 0 || (math_mode == 1 && mwin) || (math_mode == 2 && !mwin);
+
+        int r, g, b;
+        if (clipped) {
+            r = g = b = 0;
+        } else {
+            r = px.c15 & 0x1F;
+            g = (px.c15 >> 5) & 0x1F;
+            b = (px.c15 >> 10) & 0x1F;
+        }
+
+        const uint8_t layer_bit =
+            (px.layer <= kBG4) ? static_cast<uint8_t>(1 << px.layer)
+            : (px.layer == kOBJ) ? 0x10 : 0x20;
+        const bool obj_exempt =
+            px.layer == kOBJ && obj_line_[dot].color_idx < 192;
+        if ((cgadsub_ & layer_bit) && !obj_exempt && math_ok) {
+            int sr = coldata_r_, sg = coldata_g_, sb = coldata_b_;
+            bool half = cgadsub_ & 0x40;
+            if (sub_used) {
+                if (sub.valid) {
+                    sr = sub.c15 & 0x1F;
+                    sg = (sub.c15 >> 5) & 0x1F;
+                    sb = (sub.c15 >> 10) & 0x1F;
+                } else {
+                    half = false;
+                }
+            }
+            if (clipped) half = false;
+            if (cgadsub_ & 0x80) {
+                if (half) { sr &= ~1; sg &= ~1; sb &= ~1; }
+                r -= sr; g -= sg; b -= sb;
+            } else {
+                r += sr; g += sg; b += sb;
+            }
+            if (half) { r >>= 1; g >>= 1; b >>= 1; }
+            r = r < 0 ? 0 : (r > 31 ? 31 : r);
+            g = g < 0 ? 0 : (g > 31 ? 31 : g);
+            b = b < 0 ? 0 : (b > 31 ? 31 : b);
+        }
+
+        // Even subpixel: the raw sub-screen pixel (backdrop when empty).
+        int er, eg, eb;
+        if (hires) {
+            er = sub.c15 & 0x1F;
+            eg = (sub.c15 >> 5) & 0x1F;
+            eb = (sub.c15 >> 10) & 0x1F;
+        } else {
+            er = r; eg = g; eb = b;
+        }
+
+        row[dot * 6 + 0] = static_cast<uint8_t>((er << 3 | er >> 2) * bright);
+        row[dot * 6 + 1] = static_cast<uint8_t>((eg << 3 | eg >> 2) * bright);
+        row[dot * 6 + 2] = static_cast<uint8_t>((eb << 3 | eb >> 2) * bright);
+        row[dot * 6 + 3] = static_cast<uint8_t>((r << 3 | r >> 2) * bright);
+        row[dot * 6 + 4] = static_cast<uint8_t>((g << 3 | g >> 2) * bright);
+        row[dot * 6 + 5] = static_cast<uint8_t>((b << 3 | b >> 2) * bright);
     }
 }
 

@@ -6,9 +6,10 @@
 // brightness, VRAM/CGRAM/OAM read ports with prefetch, H/V counter
 // latching, 256x224 RGB out.
 //
-// Approximations (noted for a fidelity pass): modes 5/6 and pseudo-hires
-// render the main screen at 256 wide instead of 512; interlace renders
-// progressive (the STAT78 field bit still toggles).
+// Modes 5/6 and pseudo-hires render true 512-wide frames (even subpixel =
+// subscreen, odd = mainscreen, like hardware); the frame width switches to
+// 512 when the first hires line renders, re-expanding earlier rows.
+// Interlace (SETINI bits 0/1) samples the current field's lines.
 #pragma once
 
 #include <cstdint>
@@ -18,7 +19,8 @@ namespace famemu::snes {
 
 class SPpu {
 public:
-    static constexpr int kWidth = 256, kHeight = 224;
+    static constexpr int kWidth = 256, kHeight = 224;   // base resolution
+    static constexpr int kMaxWidth = 512;
 
     SPpu() { reset(); }
 
@@ -66,7 +68,20 @@ public:
     void write(uint8_t reg, uint8_t v);
     uint8_t read(uint8_t reg, uint8_t open_bus);
 
-    void render_line(int y);                 // y in [0, 223]
+    void render_line(int y);                 // y in [0, 223] (whole line)
+    // Mid-scanline ("dot-level") rendering: the system opens each visible
+    // line, catches the raster up to the CPU's dot before any $21xx write,
+    // and finishes the line after the CPU slice.
+    void begin_line(int y);
+    void catch_up(int dot) {                 // dot 0-339 -> pixel 0-255
+        if (line_y_ < 0) return;
+        int x = dot - 22;                    // ~22 dots of left border
+        if (x <= line_dot_) return;
+        if (x > 256) x = 256;
+        render_segment(line_dot_, x);
+        line_dot_ = x;
+    }
+    void finish_line();
     void frame_start();                      // line 0: field toggle
     void vblank_begin();                     // OAM address reload, flag clear
     void latch_counters(int h, int v) {      // $2137 / WRIO bit7
@@ -75,8 +90,10 @@ public:
         hv_latched_ = true;
     }
     bool overscan() const { return setini_ & 0x04; }
+    void set_pal(bool pal) { pal_ = pal; }
 
     const uint8_t* framebuffer() const { return fb_; }  // RGB888
+    int width() const { return width_; }                 // 256 or 512
     // debug: color-math state
     void dbg_colormath(uint8_t* out8) const {
         out8[0] = cgadsub_; out8[1] = coldata_r_; out8[2] = coldata_g_; out8[3] = coldata_b_;
@@ -85,7 +102,7 @@ public:
 
     template <class S>
     void serialize(S& s) {
-        s.io(vram_); s.io(cgram_); s.io(oam_); s.io(fb_);
+        s.io(vram_); s.io(cgram_); s.io(oam_); s.io(fb_); s.io(width_);
         s.io(inidisp_); s.io(obsel_); s.io(bgmode_); s.io(mosaic_);
         s.io(tm_); s.io(ts_);
         s.io(cgwsel_); s.io(cgadsub_);
@@ -113,7 +130,8 @@ private:
     uint8_t vram_[0x10000];      // 64 KB (word-addressed as 32K words)
     uint8_t cgram_[512];         // 256 x BGR555
     uint8_t oam_[544];
-    uint8_t fb_[kWidth * kHeight * 3];
+    uint8_t fb_[kMaxWidth * kHeight * 3];
+    int width_ = kWidth;
 
     uint8_t inidisp_, obsel_, bgmode_, mosaic_, tm_, ts_, cgwsel_, cgadsub_;
     uint8_t coldata_r_, coldata_g_, coldata_b_;
@@ -147,6 +165,7 @@ private:
     bool oph_byte_, opv_byte_;   // read-twice toggles
     uint8_t stat77_;
     bool field_;                 // STAT78 interlace field
+    bool pal_ = false;           // STAT78 bit 4
     uint8_t ppu1_mdr_, ppu2_mdr_;
 
     // Per-line OBJ buffer (rebuilt by evaluate_objects()).
@@ -188,12 +207,22 @@ private:
     static const uint8_t kModeBpp[8][4];
 
     struct BgPix { uint8_t color_idx; uint8_t prio; bool opaque; uint8_t pal; };
-    void fetch_bg_pixel(int bg, int x, int y, BgPix& out);
+    void fetch_bg_pixel(int bg, int x, int y, BgPix& out);  // x in dot space
+    bool hires_mode() const {
+        const int m = bgmode_ & 7;
+        return m == 5 || m == 6 || (setini_ & 0x08);
+    }
+    void render_line_512(int y, uint8_t* row);
+    void render_line_512_segment(int y, uint8_t* row, int a, int b);
+    void expand_rows_to_512(int upto_y);
+    void render_segment(int a, int b);       // pixels [a, b) of the open line
+    int line_y_ = -1;                        // open line, -1 = none
+    int line_dot_ = 0;                       // pixels already rendered
     void fetch_mode7_pixel(int bg, int x, int y, BgPix& out);
     void evaluate_objects(int y);
     bool window_state(int layer, int x) const;  // layer 0-3 BG, 4 OBJ, 5 MATH
-    Pixel resolve_screen(uint8_t designation, uint8_t win_mask, int x, int y,
-                         BgPix* bp, bool* bd);
+    Pixel resolve_screen(uint8_t designation, uint8_t win_mask, int x,
+                         int wx, int y, BgPix* bp, bool* bd);
     uint16_t bg_pixel_color(int bg, const BgPix& p) const;  // palette/direct
 };
 

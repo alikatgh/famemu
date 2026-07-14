@@ -3,15 +3,17 @@
 ; $6000 window) and the SCNT mailbox, then the S-CPU shows each result word
 ; as the backdrop colour in 32-frame slots (snes9x lockstep gate):
 ;   0 $1234*$0567 low word     4 BW-RAM word written via SA-1 bank $40
-;   1 mul high word ($2308/9)  5 SFR message bits from SA-1's SCNT
-;   2 $3039/$0025 quotient     6 BW-RAM word written via SA-1 $6000 window
-;   3 remainder                7 IRAM sentinel $1F7C
+;   1 bitmap-view word (bank $60 nibble writes -> BW-RAM $180)
+;   2 $3039/$0025 quotient     5 CC2 planar row (BRF pixels -> IRAM $3100)
+;   3 remainder                6 CC1 planar row ($6000 window conversion)
+;                              7 IRAM sentinel $1F7C
 .setcpu "65816"
 .smart +
 
 .segment "ZEROPAGE"
 frame:  .res 2
 slots:  .res 16
+tmpb:   .res 1
 
 .segment "CODE"
 
@@ -60,10 +62,12 @@ reset:
     bne @wait
 
     ; Collect result words.
+    lda #$80
+    sta $2202            ; ack the SA-1 IRQ flag (message checked earlier ROMs)
     rep #$20
     lda $3001            ; slot 0: mul low
     sta slots+0
-    lda $3003            ; slot 1: mul high
+    lda f:$400180        ; slot 1: bitmap-view result (nibbles via bank $60)
     sta slots+2
     lda $3005            ; slot 2: quotient
     sta slots+4
@@ -71,14 +75,42 @@ reset:
     sta slots+6
     lda f:$400100        ; slot 4: BW-RAM via bank $40
     sta slots+8
-    sep #$20
-    lda $2300            ; slot 5: SFR (IRQ flag + message nibble)
+    lda $3100            ; slot 5: CC2 planar row 0 (planes 0/1)
     sta slots+10
-    stz slots+11
+    sep #$20
+    ; slot 6: CC1 — arm char-conversion 1, DMA one tile from the 4bpp bitmap
+    ; the SA-1 left at BW-RAM $0400 (banks $40+) to VRAM, read VRAM back.
+    lda #$01
+    sta $2231            ; CDMA: 4bpp, width 1 tile
+    lda #$b0
+    sta $2230            ; DCNT: enable + char conversion, type 1
+    stz $2235
+    stz $2236            ; DDA LH write arms CC1
     lda #$80
-    sta $2202            ; ack the SA-1 IRQ flag
+    sta $2115            ; VMAIN: word inc on high byte
+    ldx #$7000
+    stx $2116
+    lda #$01             ; DMA ch0: mode 1 -> $2118/19
+    sta $4300
+    lda #$18
+    sta $4301
+    stz $4302
+    lda #$04
+    sta $4303
+    lda #$40
+    sta $4304            ; A = $40:0400 (the bitmap)
+    lda #$20
+    sta $4305
+    stz $4306            ; $0020 bytes = one 4bpp tile
+    lda #$01
+    sta $420b
+    lda #$80
+    sta $2231            ; CHDEND
+    stz $2230
+    ldx #$7000
+    stx $2116            ; read back planar row 0 word
     rep #$20
-    lda f:$400040        ; slot 6: BW-RAM written via the SA-1 $6000 window
+    lda $2139            ; low: $2139, high: $213A via the prefetch port
     sta slots+12
     lda $300a            ; slot 7: sentinel
     sta slots+14
@@ -178,15 +210,57 @@ sa1_entry:
     sta $3007            ; remainder
     sep #$20
 
-    ; BW-RAM through bank $40 and through the $6000 window (block 0).
+    ; BW-RAM through bank $40.
     lda #$77
     sta f:$400100
     lda #$88
     sta f:$400101
-    lda #$c3
-    sta $6040
-    lda #$3c
-    sta $6041
+
+    ; Bitmap view: 4bpp nibble writes via bank $60 land in BW-RAM $180-181.
+    stz $223f            ; BBF: 4-bit pixels
+    lda #$0a
+    sta f:$600300
+    lda #$05
+    sta f:$600301
+    lda #$0c
+    sta f:$600302
+    lda #$03
+    sta f:$600303
+
+    ; CC1 source bitmap: 4bpp pixels 1..8 in row 0 at BW-RAM $0400.
+    lda #$21
+    sta f:$400400
+    lda #$43
+    sta f:$400401
+    lda #$65
+    sta f:$400402
+    lda #$87
+    sta f:$400403
+
+    ; CC2: feed one 8x8 tile (64 pixels, one per byte, 16 per $224F write)
+    ; through the BRF registers into IRAM $3100. Pixel value = index & 15.
+    lda #$a0             ; DCNT: enable + char conversion, type 2
+    sta $2230
+    lda #$01             ; CDMA: 4bpp
+    sta $2231
+    stz $2235
+    lda #$31
+    sta $2236            ; DDA = IRAM $3100
+    stz tmpb             ; running pixel value
+    ldy #$0004           ; four $224F writes = one tile
+@cc2grp:
+    ldx #$2240
+@cc2px:
+    lda tmpb
+    inc tmpb
+    and #$0f
+    sta a:$0000,x
+    inx
+    cpx #$2250
+    bne @cc2px
+    dey
+    bne @cc2grp
+    stz $2230            ; CC off again
 
     ; IRAM sentinel, message + IRQ to the S-CPU, ready flag.
     lda #$7c

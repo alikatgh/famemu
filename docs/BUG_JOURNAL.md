@@ -68,6 +68,24 @@ script name → one-line "what bug it was built to catch".
 
 Newest first. Five lines max per entry. File:line citations beat prose.
 
+### 2026-07-14 (PM2) · SA-1 char-conversion: the oracle's SOURCE beats guessing the protocol
+Symptom: CC1/CC2 test slots 100% off vs snes9x while famemu matched my own design exactly.
+Cause: I guessed CC semantics (trigger regs, type-bit polarity, pixel packing); snes9x's actual model differs on all three (CC2 = $224F-only, 16 pixels/write, tile per 4 writes; CC1 converts during S-CPU DMA from banks $40+, not window reads; DCNT bit4 CLEAR = CC2).
+Fix: read snes9x sa1.cpp/dma.cpp (public), implement those semantics (sa1_impl.hpp); sa1.sfc now 8/8 lockstep.
+**Lesson:** when the reference emulator IS the gate and its source is public, read it before designing a protocol test — one fetch beats three guess-iterate cycles. (Public-DOMAIN algorithms — S-DD1 by Andreas Naive — can be taken exactly, with credit.)
+
+### 2026-07-14 (PM2) · Test-ROM boot pad shifts which result slot a sampled frame shows
+Symptom: DSP-1 lockstep frames "matched the wrong values"; decoded slots looked shifted by one.
+Cause: dump_ppm gives snes9x 24 boot frames and famemu gets the same pad, so a frame sampled at script-time n displays slot (n+24)>>5, not n>>5.
+Fix: read famemu's slot words from WRAM directly (SNES_DEBUG_SLOTS in snes_dump) before interpreting color-decoded values.
+**Lesson:** in lockstep harnesses only FRAME EQUALITY is meaningful; decoding game state out of pixels needs the pad accounted for — or a debug port.
+
+### 2026-07-14 (PM2) · python str.replace patches BOTH read() and write() twins
+Symptom: build broke with "void function 'write' should not return a value" after adding chip bus hooks.
+Cause: scripted str.replace on a guard block that exists in both SnesSystem::read and ::write inserted read-style hooks into write.
+Fix: re-patch with unique surrounding context per function.
+**Lesson:** when patching C++ with replace-scripts, anchor on text unique to the FUNCTION, not the guard — read/write pairs are near-identical by design.
+
 ### 2026-07-14 · Blanket per-opcode "decode cycle" made the 65816 ~20% slow; game dropped frames
 Symptom: KORA play_clouds lockstep 16% off; boy 2px short (pyw 1024 vs 1026) — outdoor only.
 Cause: cpu65816.cpp charged +6 master cycles per opcode ON TOP of per-access costs; real memory ops have no extra internal cycle, so streaming-heavy frames overran and the game dropped 2 frames (indoor, no streaming, matched — the tell).

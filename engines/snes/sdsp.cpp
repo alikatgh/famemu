@@ -11,19 +11,67 @@ static constexpr int kRateTable[32] = {
     6,    5,    4,    3,    2,    1,
 };
 
+// 4-tap Gaussian kernel with the hardware's table layout (512 entries,
+// looked up fwd/rev around the fractional position). Values are computed
+// from a windowed Gaussian normalized to the hardware's ~2048 DC gain —
+// the curve, not a dump.
+static const int16_t* gauss_table() {
+    static int16_t g[512];
+    static bool init = false;
+    if (!init) {
+        double raw[512];
+        double peak = 0.0;
+        for (int i = 0; i < 512; ++i) {
+            const double x = (511 - i) / 511.0;           // 0 at the peak end
+            const double window = 0.5 * (1.0 + __builtin_cos(3.14159265358979 * x));
+            raw[i] = __builtin_exp(-4.5 * x * x) * window;
+            if (raw[i] > peak) peak = raw[i];
+        }
+        // Normalize: at frac=0 the taps use g[255], g[511], g[256], g[0];
+        // hardware sums those to slightly under 2048.
+        const double dc = raw[255] + raw[511] + raw[256] + raw[0];
+        for (int i = 0; i < 512; ++i)
+            g[i] = static_cast<int16_t>(raw[i] * (2042.0 / dc) + 0.5);
+        init = true;
+    }
+    return g;
+}
+
 void SDsp::write(uint8_t addr, uint8_t v) {
     addr &= 0x7F;
     const uint8_t old_kon = regs_[0x4C];
     regs_[addr] = v;
     if (addr == 0x4C) {  // KON
         for (int i = 0; i < 8; ++i)
-            if (v & (1 << i)) key_on(i);
+            if (v & (1 << i)) {
+                key_on(i);
+                regs_[0x7C] &= static_cast<uint8_t>(~(1 << i));  // clear ENDX bit
+            }
         regs_[0x4C] = old_kon;  // KON reads back as written momentarily; keep simple
     }
     if (addr == 0x5C) {  // KOF -> release
         for (int i = 0; i < 8; ++i)
             if (v & (1 << i) && voices_[i].active)
                 voices_[i].phase = Voice::Release;
+    }
+    if (addr == 0x6C && (v & 0x80)) {  // FLG soft reset: silence everything
+        for (int i = 0; i < 8; ++i) {
+            voices_[i].active = false;
+            voices_[i].phase = Voice::Off;
+            voices_[i].env = 0;
+        }
+        regs_[0x5C] = 0xFF;
+    }
+    if (addr == 0x7C) regs_[0x7C] = 0;  // any ENDX write clears it
+}
+
+void SDsp::noise_step() {
+    const int rate = regs_[0x6C] & 0x1F;
+    if (rate == 0 || kRateTable[rate] == 0) return;
+    if (++noise_counter_ >= kRateTable[rate]) {
+        noise_counter_ = 0;
+        const uint16_t fb = ((noise_lfsr_ ^ (noise_lfsr_ >> 1)) & 1);
+        noise_lfsr_ = static_cast<uint16_t>((noise_lfsr_ >> 1) | (fb << 14));
     }
 }
 
@@ -81,6 +129,32 @@ void SDsp::env_step(int vi) {
         if (++vc.env_counter >= kRateTable[rate]) { vc.env_counter = 0; return true; }
         return false;
     };
+    // GAIN mode (ADSR1 bit7 clear) — except Release, which always ramps down.
+    if (!(adsr1 & 0x80) && vc.phase != Voice::Release && vc.phase != Voice::Off) {
+        const uint8_t gain = regs_[(vi << 4) | 0x07];
+        if (!(gain & 0x80)) {
+            vc.env = (gain & 0x7F) << 4;               // direct
+        } else {
+            const int rate = gain & 0x1F;
+            switch ((gain >> 5) & 3) {
+                case 0:  // linear decrease
+                    if (ticked(rate)) vc.env -= 32;
+                    break;
+                case 1:  // exponential decrease
+                    if (ticked(rate)) vc.env -= ((vc.env - 1) >> 8) + 1;
+                    break;
+                case 2:  // linear increase
+                    if (ticked(rate)) vc.env += 32;
+                    break;
+                default:  // bent increase: fast to 0x600, slow above
+                    if (ticked(rate)) vc.env += (vc.env < 0x600) ? 32 : 8;
+                    break;
+            }
+        }
+        if (vc.env > 0x7FF) vc.env = 0x7FF;
+        if (vc.env < 0) vc.env = 0;
+        return;
+    }
     switch (vc.phase) {
         case Voice::Attack: {
             const int rate = ((adsr1 & 0x0F) << 1) + 1;
@@ -115,24 +189,37 @@ void SDsp::env_step(int vi) {
 
 int SDsp::voice_sample(int vi) {
     Voice& vc = voices_[vi];
-    if (!vc.active) return 0;
+    if (!vc.active) { voice_out_[vi] = 0; return 0; }
     if (!vc.decoded_valid) decode_block(vc);
 
-    // 4-tap Catmull-Rom over a sliding sample window (approximates the
-    // hardware's 4-point Gaussian without copying its dumped table; smooth
-    // across BRR block boundaries, unlike the old linear interp).
-    const double t = (vc.frac & 0xFFF) / 4096.0;
-    const double p0 = vc.taps[0], p1 = vc.taps[1], p2 = vc.taps[2], p3 = vc.taps[3];
-    double interp = p1 + 0.5 * t * (p2 - p0 +
-                    t * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3 +
-                    t * (3.0 * (p1 - p2) + p3 - p0)));
-    int sample = static_cast<int>(interp);
-    if (sample > 0x7FFF) sample = 0x7FFF;
-    if (sample < -0x8000) sample = -0x8000;
+    int sample;
+    if (regs_[0x3D] & (1 << vi)) {
+        // NON: this voice plays the noise LFSR (15-bit, sign-extended).
+        sample = static_cast<int16_t>(noise_lfsr_ << 1) >> 1;
+    } else {
+        // 4-tap Gaussian: fwd/rev table lookups around the 8-bit fraction,
+        // partial sums >>11 like hardware.
+        const int16_t* g = gauss_table();
+        const int off = (vc.frac >> 4) & 0xFF;
+        int s = (g[255 - off] * vc.taps[0]) >> 11;
+        s += (g[511 - off] * vc.taps[1]) >> 11;
+        s += (g[256 + off] * vc.taps[2]) >> 11;
+        s += (g[off] * vc.taps[3]) >> 11;
+        if (s > 0x7FFF) s = 0x7FFF;
+        if (s < -0x8000) s = -0x8000;
+        sample = s;
+    }
 
-    // advance by pitch
-    const uint16_t pitch = static_cast<uint16_t>(
+    // advance by pitch, with PMON modulation from the previous voice's out
+    uint32_t pitch = static_cast<uint16_t>(
         regs_[(vi << 4) | 0x02] | ((regs_[(vi << 4) | 0x03] & 0x3F) << 8));
+    if (vi > 0 && (regs_[0x2D] & (1 << vi))) {
+        pitch = static_cast<uint32_t>(
+            static_cast<int>(pitch) +
+            (((voice_out_[vi - 1] >> 5) * static_cast<int>(pitch)) >> 10));
+        if (static_cast<int>(pitch) < 0) pitch = 0;
+        if (pitch > 0x3FFF) pitch = 0x3FFF;
+    }
     vc.frac += pitch;
     while (vc.frac >= 0x1000) {
         vc.frac -= 0x1000;
@@ -145,6 +232,7 @@ int SDsp::voice_sample(int vi) {
             vc.sample_pos = 0;
             const uint8_t hdr = aram_[vc.brr_addr];
             if (hdr & 0x01) {  // END
+                regs_[0x7C] |= static_cast<uint8_t>(1 << vi);  // ENDX
                 if (hdr & 0x02) {  // loop
                     const uint16_t dir = static_cast<uint16_t>(regs_[0x5D]) << 8;
                     const uint8_t srcn = regs_[(vi << 4) | 0x04];
@@ -164,12 +252,17 @@ int SDsp::voice_sample(int vi) {
     if (!vc.decoded_valid) decode_block(vc);
 
     env_step(vi);
-    return (sample * vc.env) >> 11;
+    const int out = (sample * vc.env) >> 11;
+    voice_out_[vi] = static_cast<int16_t>(out);
+    regs_[(vi << 4) | 0x08] = static_cast<uint8_t>(out >> 8);       // OUTX
+    regs_[(vi << 4) | 0x09] = static_cast<uint8_t>(vc.env >> 4);    // ENVX
+    return out;
 }
 
 void SDsp::render(int samples) {
     const uint8_t flg = regs_[0x6C];
     for (int n = 0; n < samples; ++n) {
+        noise_step();
         int l = 0, r = 0, echo_l = 0, echo_r = 0;
         if (!(flg & 0x40)) {  // not muted
             for (int v = 0; v < 8; ++v) {

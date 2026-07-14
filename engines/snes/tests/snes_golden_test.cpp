@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
         if (!sys.load_rom(data.data(), data.size())) continue;
         for (int i = 0; i < frames; ++i) sys.run_frame();
         const uint32_t got = crc32(sys.framebuffer(),
-                                   static_cast<size_t>(SPpu::kWidth) * SPpu::kHeight * 3);
+                                   static_cast<size_t>(sys.ppu().width()) * SPpu::kHeight * 3);
         ++checked;
         if (gen) {
             std::printf("%s %d %08X\n", rom, frames, got);

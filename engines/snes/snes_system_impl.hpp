@@ -12,6 +12,10 @@ inline SnesSystem::SnesSystem() : cpu_(*this) {}
 inline SnesSystem::~SnesSystem() {
     delete sa1_;
     delete sfx_;
+    delete cx4_;
+    delete sdd1_;
+    delete spc7110_;
+    delete st010_;
 }
 
 // Score a candidate header location: checksum pair, map-mode nibble matching
@@ -40,6 +44,11 @@ inline int SnesSystem::score_header(const uint8_t* rom, size_t len, size_t hdr,
 inline void SnesSystem::detect_mapping_and_chips() {
     delete sa1_; sa1_ = nullptr;
     delete sfx_; sfx_ = nullptr;
+    delete cx4_; cx4_ = nullptr;
+    delete sdd1_; sdd1_ = nullptr;
+    delete spc7110_; spc7110_ = nullptr;
+    delete st010_; st010_ = nullptr;
+    dsp_kind_ = 0;
     const int lo = score_header(rom_.data(), rom_.size(), 0x7FC0, false);
     const int hi = score_header(rom_.data(), rom_.size(), 0xFFC0, true);
     mapping_ = (hi > lo) ? Mapping::HiROM : Mapping::LoROM;
@@ -57,9 +66,36 @@ inline void SnesSystem::detect_mapping_and_chips() {
         // Expansion-RAM size byte lives at $xxBD on SuperFX carts.
         const uint8_t xram = rom_[hdr - 0x10 + 0x0D];
         sram_bytes = xram ? (1024u << xram) : 0x10000;  // default 64 KB
+    } else if (chip == 0xF3 && rom_[hdr + 0x1A] == 0x33) {
+        cx4_ = new Cx4();
+    } else if (chip == 0x43 || chip == 0x45) {
+        sdd1_ = new Sdd1(*this);
+    } else if (chip == 0xF5 && (map & 0x0F) == 0x0A) {
+        spc7110_ = new Spc7110();
+        spc7110_->set_data_rom(rom_.data(), static_cast<uint32_t>(rom_.size()));
+    } else if (chip == 0xF6) {
+        st010_ = new St010();
+    } else if (chip == 0x03 || chip == 0x05) {
+        // NEC DSP series; variant selection matches NSRT/snes9x.
+        const uint8_t speed = map;
+        if (chip == 0x03) dsp_kind_ = (speed == 0x30) ? 4 : 1;
+        else dsp_kind_ = (speed == 0x20) ? 2
+                         : (speed == 0x30 && rom_[hdr - 0x16] == 0xB2) ? 3 : 1;
+        dsp_hirom_map_ = (mapping_ == Mapping::HiROM);
+        dsp_boundary_ = dsp_hirom_map_ ? 0x7000
+                        : (rom_.size() > 0x100000) ? 0x4000 : 0xC000;
+        dsp1_.reset();
+    dsp2_.reset();
+    if (cx4_) cx4_->reset();
+    if (sdd1_) sdd1_->reset();
+    if (spc7110_) spc7110_->reset();
+    if (st010_) st010_->reset();
     }
     if (sram_bytes > sizeof sram_) sram_bytes = sizeof sram_;
     sram_mask_ = sram_bytes ? (sram_bytes - 1) : 0;     // 0 = no SRAM
+    const uint8_t region = rom_[hdr + 0x19];
+    pal_ = (region >= 2 && region <= 12);               // Europe/PAL codes
+    ppu_.set_pal(pal_);
 }
 
 inline bool SnesSystem::load_rom(const uint8_t* data, size_t len) {
@@ -86,10 +122,11 @@ inline void SnesSystem::power_on() {
     wrdiv_ = 0xFFFF;
     rddiv_ = rdmpy_ = 0;
     wmadd_ = 0;
-    joy_[0] = joy_[1] = 0;
-    buttons_[0] = buttons_[1] = 0;
+    std::memset(joy_, 0, sizeof joy_);
+    std::memset(buttons_, 0, sizeof(buttons_));
     joy_strobe_ = false;
-    joy_shift_[0] = joy_shift_[1] = 0;
+    std::memset(joy_shift_, 0, sizeof joy_shift_);
+    wrio_ = 0xFF;
     autojoy_busy_ = 0;
     open_bus_ = 0;
     spc_.reset();
@@ -103,6 +140,12 @@ inline void SnesSystem::power_on() {
     line_ = 0;
     if (sa1_) sa1_->reset();
     if (sfx_) sfx_->reset();
+    dsp1_.reset();
+    dsp2_.reset();
+    if (cx4_) cx4_->reset();
+    if (sdd1_) sdd1_->reset();
+    if (spc7110_) spc7110_->reset();
+    if (st010_) st010_->reset();
     cpu_.reset();
     line_start_cyc_ = cpu_.cyc;
 }
@@ -118,8 +161,9 @@ inline void SnesSystem::run_cpu_to(uint64_t target) {
 
 inline void SnesSystem::run_frame() {
     const int vblank_start = ppu_.overscan() ? 240 : 225;
+    const int frame_lines = pal_ ? 312 : kLinesPerFrame;
     const uint64_t frame_start = cpu_.cyc;
-    for (line_ = 0; line_ < kLinesPerFrame; ++line_) {
+    for (line_ = 0; line_ < frame_lines; ++line_) {
         line_start_cyc_ = cpu_.cyc;
         const uint64_t line_end =
             frame_start + static_cast<uint64_t>(line_ + 1) * kLineCycles;
@@ -142,6 +186,12 @@ inline void SnesSystem::run_frame() {
         if (autojoy_busy_ > 0) --autojoy_busy_;
         cpu_.cyc += 40;                     // WRAM refresh dead time
 
+        // Super Scope: the beam "sees" the gun at (gun_x_, gun_y_) — latch
+        // the H/V counters on that line unless aiming offscreen.
+        if (port2_ == Port2::SuperScope && line_ == gun_y_ + 1 &&
+            !(gun_buttons_ & 0x10))
+            ppu_.latch_counters(gun_x_ + 22, line_);
+
         // H/V IRQ timers ($4200 bits 4/5, $4207-$420A).
         const bool hirq = nmitimen_ & 0x10, virq = nmitimen_ & 0x20;
         uint64_t irq_at = UINT64_MAX;
@@ -151,6 +201,13 @@ inline void SnesSystem::run_frame() {
             irq_at = line_start_cyc_ + 14 +
                      static_cast<uint64_t>(htime_ & 0x1FF) * 4;
         }
+        // HDMA lands at the start of the line (like hardware), then the
+        // line opens for dot-level catch-up rendering during the CPU slice.
+        if (line_ < SPpu::kHeight) {
+            hdma_step();       // fb row y = scanline y+1
+            ppu_.begin_line(line_);
+        }
+
         if (irq_at != UINT64_MAX && irq_at < line_end) {
             run_cpu_to(irq_at);
             timeup_ |= 0x80;
@@ -161,13 +218,10 @@ inline void SnesSystem::run_frame() {
         if (sa1_) sa1_->run_line();
         if (sfx_) sfx_->run_line();
         spc_.run(65);  // ~1.024 MHz / 15734 lines
-        if (line_ < SPpu::kHeight) {
-            hdma_step();       // fb row y = scanline y+1
-            ppu_.render_line(line_);
-        }
+        if (line_ < SPpu::kHeight) ppu_.finish_line();
     }
-    // 32 kHz DSP output: 32000 / 60.0988 fps ≈ 532.5 samples per frame.
-    sample_acc_ += 32000.0 / 60.0988;
+    // 32 kHz DSP output: 32000 samples split across the frame rate.
+    sample_acc_ += 32000.0 / (pal_ ? 50.007 : 60.0988);
     const int n = static_cast<int>(sample_acc_);
     sample_acc_ -= n;
     dsp_.render(n);
@@ -191,11 +245,44 @@ inline uint16_t SnesSystem::pack_joy(uint32_t b) const {
     return j;
 }
 
+// Port 2's serial lines depend on the peripheral: a pad reports on D0
+// only; the multitap muxes two pads onto D0/D1 selected by WRIO bit 7; the
+// Super Scope reports its buttons on D0.
+inline uint16_t SnesSystem::scope_report() const {
+    // bit15.. : Fire, Cursor, Turbo, Pause, then 1,1,0,0 signature.
+    uint16_t r = 0;
+    if (gun_buttons_ & 0x01) r |= 0x8000;
+    if (gun_buttons_ & 0x02) r |= 0x4000;
+    if (gun_buttons_ & 0x04) r |= 0x2000;
+    if (gun_buttons_ & 0x08) r |= 0x1000;
+    r |= 0x0C00;                            // controller signature bits
+    if (gun_buttons_ & 0x10) r |= 0x0200;   // offscreen flag
+    return r;
+}
+
+inline uint16_t SnesSystem::port2_d0() const {
+    switch (port2_) {
+        case Port2::Multitap: return pack_joy(buttons_[(wrio_ & 0x80) ? 1 : 3]);
+        case Port2::SuperScope: return scope_report();
+        default: return pack_joy(buttons_[1]);
+    }
+}
+
+inline uint16_t SnesSystem::port2_d1() const {
+    if (port2_ == Port2::Multitap)
+        return pack_joy(buttons_[(wrio_ & 0x80) ? 2 : 4]);
+    return 0;
+}
+
 inline void SnesSystem::latch_joypads() {
-    joy_[0] = pack_joy(buttons_[0]);
-    joy_[1] = pack_joy(buttons_[1]);
+    joy_[0] = pack_joy(buttons_[0]);        // port 1 D0 -> JOY1
+    joy_[1] = port2_d0();                   // port 2 D0 -> JOY2
+    joy_[2] = 0;                            // port 1 D1 -> JOY3
+    joy_[3] = port2_d1();                   // port 2 D1 -> JOY4
     joy_shift_[0] = joy_[0];
     joy_shift_[1] = joy_[1];
+    joy_shift_[2] = joy_[2];
+    joy_shift_[3] = joy_[3];
 }
 
 inline uint8_t SnesSystem::read(uint32_t a24) {
@@ -224,15 +311,21 @@ inline uint8_t SnesSystem::read(uint32_t a24) {
             return open_bus_ = v;
         }
         if (off == 0x4016 || off == 0x4017) {
-            const int pad = off & 1;
+            const int port = off & 1;
             uint8_t bit;
             if (joy_strobe_) {
-                bit = static_cast<uint8_t>(pack_joy(buttons_[pad]) >> 15);
+                bit = static_cast<uint8_t>(
+                    (port ? port2_d0() : pack_joy(buttons_[0])) >> 15);
             } else {
-                bit = (joy_shift_[pad] & 0x8000) ? 1 : 0;
-                joy_shift_[pad] = static_cast<uint16_t>((joy_shift_[pad] << 1) | 1);
+                bit = (joy_shift_[port] & 0x8000) ? 1 : 0;
+                joy_shift_[port] = static_cast<uint16_t>((joy_shift_[port] << 1) | 1);
+                if (port) {  // D1 line shifts alongside on port 2 (multitap)
+                    bit |= ((joy_shift_[3] & 0x8000) ? 2 : 0);
+                    joy_shift_[3] = static_cast<uint16_t>((joy_shift_[3] << 1) | 1);
+                    return open_bus_ = static_cast<uint8_t>(bit | 0x1C);
+                }
             }
-            return open_bus_ = static_cast<uint8_t>(bit | (pad ? 0x1C : 0));
+            return open_bus_ = static_cast<uint8_t>(bit | (port ? 0x1C : 0));
         }
         if (off >= 0x4200 && off < 0x4380) {
             switch (off) {
@@ -254,17 +347,45 @@ inline uint8_t SnesSystem::read(uint32_t a24) {
                 case 0x4219: return open_bus_ = static_cast<uint8_t>(joy_[0] >> 8);
                 case 0x421A: return open_bus_ = static_cast<uint8_t>(joy_[1]);
                 case 0x421B: return open_bus_ = static_cast<uint8_t>(joy_[1] >> 8);
-                case 0x421C: case 0x421D: case 0x421E: case 0x421F: return open_bus_ = 0;
+                case 0x421C: return open_bus_ = static_cast<uint8_t>(joy_[2]);
+                case 0x421D: return open_bus_ = static_cast<uint8_t>(joy_[2] >> 8);
+                case 0x421E: return open_bus_ = static_cast<uint8_t>(joy_[3]);
+                case 0x421F: return open_bus_ = static_cast<uint8_t>(joy_[3] >> 8);
+                case 0x4201: return open_bus_ = wrio_;
                 default:
                     if (off >= 0x4300) return open_bus_ = dma_[(off - 0x4300) & 0x7F];
                     return open_bus_;
             }
+        }
+        if (cx4_ && off >= 0x6000 && off < 0x8000)
+            return open_bus_ = cx4_->read(static_cast<uint16_t>(off - 0x6000));
+        if (sdd1_ && off >= 0x4800 && off <= 0x4807)
+            return open_bus_ = sdd1_->read_io(off);
+        if (spc7110_ && off >= 0x4800 && off <= 0x4842)
+            return open_bus_ = spc7110_->read_io(off);
+        if (dsp_kind_ && !dsp_hirom_map_ && b >= 0x20 && off >= 0x8000) {
+            const bool dr = off < dsp_boundary_;
+            if (dsp_kind_ == 2)
+                return open_bus_ = dr ? dsp2_.read_dr() : dsp2_.read_sr();
+            return open_bus_ = dr ? dsp1_.read_dr() : dsp1_.read_sr();
+        }
+        if (dsp_kind_ && dsp_hirom_map_ && b <= 0x1F && off >= 0x6000 && off < 0x8000) {
+            const bool dr = off < dsp_boundary_;
+            if (dsp_kind_ == 2)
+                return open_bus_ = dr ? dsp2_.read_dr() : dsp2_.read_sr();
+            return open_bus_ = dr ? dsp1_.read_dr() : dsp1_.read_sr();
         }
         if (off >= 0x8000) return open_bus_ = rom_read(b, off);
         if (mapping_ == Mapping::HiROM && b >= 0x20 && off >= 0x6000 && sram_mask_)
             return open_bus_ = sram_[(((b & 0x1F) * 0x2000) + (off - 0x6000)) & sram_mask_];
         return open_bus_;
     }
+    if (st010_ && (bank & 0xF8) == 0x68 && off < 0x1000)
+        return open_bus_ = st010_->read(off);
+    if (sdd1_ && bank >= 0xC0)
+        return open_bus_ = rom_linear(sdd1_->map(bank, off));
+    if (spc7110_ && bank >= 0xC0)
+        return open_bus_ = rom_linear(spc7110_->map_rom(bank, off));
     if (mapping_ == Mapping::LoROM) {
         if (b >= 0x70 && b <= 0x7D && off < 0x8000 && sram_mask_)
             return open_bus_ = sram_[(((b - 0x70) * 0x8000) + off) & sram_mask_];
@@ -289,7 +410,17 @@ inline void SnesSystem::write(uint32_t a24, uint8_t v) {
     if (b <= 0x3F) {
         if (off < 0x2000) { wram_[off] = v; return; }
         if (off >= 0x2140 && off <= 0x217F) { apu_write((off - 0x2140) & 3, v); return; }
-        if (off >= 0x2100 && off < 0x2140) { ppu_.write(off & 0xFF, v); return; }
+        if (off >= 0x2100 && off < 0x2140) {
+            ppu_.catch_up(ppu_dot());   // raster effects: draw up to here first
+            ppu_.write(off & 0xFF, v);
+            return;
+        }
+        if (cx4_ && off >= 0x6000 && off < 0x8000) {
+            cx4_->write(static_cast<uint16_t>(off - 0x6000), v);
+            return;
+        }
+        if (sdd1_ && off >= 0x4800 && off <= 0x4807) { sdd1_->write_io(off, v); return; }
+        if (spc7110_ && off >= 0x4800 && off <= 0x4842) { spc7110_->write_io(off, v); return; }
         switch (off) {
             case 0x2180:
                 wram_[wmadd_] = v;
@@ -302,11 +433,19 @@ inline void SnesSystem::write(uint32_t a24, uint8_t v) {
                 const bool s = v & 1;
                 if (joy_strobe_ && !s) {
                     joy_shift_[0] = pack_joy(buttons_[0]);
-                    joy_shift_[1] = pack_joy(buttons_[1]);
+                    joy_shift_[1] = port2_d0();
+                    joy_shift_[2] = 0;
+                    joy_shift_[3] = port2_d1();
                 }
                 joy_strobe_ = s;
                 return;
             }
+            case 0x4201:
+                // WRIO: falling edge on bit 7 latches the H/V counters.
+                if ((wrio_ & 0x80) && !(v & 0x80))
+                    ppu_.latch_counters(ppu_dot(), line_);
+                wrio_ = v;
+                return;
             case 0x4200:
                 if ((v & 0x80) && !(nmitimen_ & 0x80) && (rdnmi_ & 0x80)) cpu_.nmi();
                 nmitimen_ = v;
@@ -328,12 +467,31 @@ inline void SnesSystem::write(uint32_t a24, uint8_t v) {
             case 0x420D: memsel_ = v; return;
             default:
                 if (off >= 0x4300 && off < 0x4380) { dma_[off - 0x4300] = v; return; }
+                if (dsp_kind_ && !dsp_hirom_map_ && b >= 0x20 && off >= 0x8000) {
+                    if (off < dsp_boundary_) {
+                        if (dsp_kind_ == 2) dsp2_.write_dr(v);
+                        else dsp1_.write_dr(v);
+                    }
+                    return;
+                }
+                if (dsp_kind_ && dsp_hirom_map_ && b <= 0x1F && off >= 0x6000 &&
+                    off < 0x8000) {
+                    if (off < dsp_boundary_) {
+                        if (dsp_kind_ == 2) dsp2_.write_dr(v);
+                        else dsp1_.write_dr(v);
+                    }
+                    return;
+                }
                 if (mapping_ == Mapping::HiROM && b >= 0x20 && off >= 0x6000 &&
                     off < 0x8000 && sram_mask_) {
                     sram_[(((b & 0x1F) * 0x2000) + (off - 0x6000)) & sram_mask_] = v;
                 }
                 return;
         }
+    }
+    if (st010_ && (bank & 0xF8) == 0x68 && off < 0x1000) {
+        st010_->write(off, v);
+        return;
     }
     if (mapping_ == Mapping::LoROM && b >= 0x70 && b <= 0x7D && off < 0x8000 &&
         sram_mask_)
@@ -469,6 +627,24 @@ inline void SnesSystem::run_dma(uint8_t enable) {
         const int step = (ctrl & 0x10) ? -1 : 1;
         uint32_t n = 0;
         cpu_.cyc += 8u * count;             // 8 master cycles per byte
+        // SA-1 character conversion 1: a DMA to the VRAM port from banks
+        // $40-4F feeds planar data converted on the fly from the bitmap.
+        std::vector<uint8_t> cc1buf;
+        if (sa1_ && sa1_->cc1_armed() && !(ctrl & 0x80) && breg == 0x18 &&
+            ((aaddr >> 16) & 0xF0) == 0x40) {
+            cc1buf.assign(count + 64, 0);
+            sa1_->cc1_convert(aaddr, cc1buf.data(), count);
+        }
+        // S-DD1: an armed channel DMAing from banks $C0+ pulls decompressed
+        // data instead of raw ROM.
+        if (sdd1_ && sdd1_->dma_armed(ch) && !(ctrl & 0x80) &&
+            (aaddr >> 16) >= 0xC0) {
+            cc1buf.assign(count + 64, 0);
+            sdd1_->decompress(sdd1_->map(static_cast<uint8_t>(aaddr >> 16),
+                                         static_cast<uint16_t>(aaddr)),
+                              cc1buf.data(), count);
+            sdd1_->dma_done(ch);
+        }
         while (count--) {
             uint8_t breg_off = 0;
             switch (mode) {
@@ -483,7 +659,7 @@ inline void SnesSystem::run_dma(uint8_t enable) {
                 write(aaddr, read(0x2100u | static_cast<uint8_t>(breg + breg_off)));
             } else {
                 write(0x2100u | static_cast<uint8_t>(breg + breg_off),
-                      read(aaddr));
+                      cc1buf.empty() ? read(aaddr) : cc1buf[n]);
             }
             if (!fixed) aaddr = (aaddr & 0xFF0000) |
                                 ((aaddr + step) & 0xFFFF);
@@ -529,6 +705,8 @@ inline void SnesSystem::serialize_all(S& s) {
     s.io(wrmpya_); s.io(wrmpyb_); s.io(wrdiv_); s.io(rddiv_); s.io(rdmpy_);
     s.io(wmadd_);
     s.io(joy_); s.io(joy_shift_); s.io(joy_strobe_); s.io(autojoy_busy_);
+    s.io(port2_); s.io(wrio_); s.io(pal_);
+    s.io(gun_x_); s.io(gun_y_); s.io(gun_buttons_);
     s.io(open_bus_);
     s.io(hdmaen_); s.io(hdma_term_); s.io(hdma_do_);
     s.io(buttons_); s.io(line_); s.io(line_start_cyc_);
@@ -539,7 +717,15 @@ inline void SnesSystem::serialize_all(S& s) {
     dsp_.serialize(s);
     if (sa1_) sa1_->serialize(s);
     if (sfx_) sfx_->serialize(s);
+    if (dsp_kind_ == 2) dsp2_.serialize(s);
+    else if (dsp_kind_) dsp1_.serialize(s);
+    if (cx4_) cx4_->serialize(s);
+    if (sdd1_) sdd1_->serialize(s);
+    if (spc7110_) spc7110_->serialize(s);
+    if (st010_) st010_->serialize(s);
 }
+
+inline uint8_t Sdd1::rom(uint32_t a) const { return sys_.rom_linear(a); }
 
 }  // namespace famemu::snes
 
