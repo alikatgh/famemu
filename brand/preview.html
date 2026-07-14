@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Ember marks — preview</title>
+<style>
+  body{margin:0;background:#0e0d16;color:#d6d3e4;font-family:ui-monospace,Menlo,Consolas,monospace;padding:40px}
+  .row{display:flex;gap:56px;align-items:flex-end;flex-wrap:wrap;margin-bottom:48px}
+  .pane{text-align:center}
+  .cap{font-size:12px;color:#8b87a3;margin-top:14px;letter-spacing:.06em}
+  h2{font-weight:400;color:#8b87a3;font-size:13px;letter-spacing:.14em;text-transform:uppercase;border-bottom:1px solid #262438;padding-bottom:8px;margin:0 0 28px}
+  .lockup{display:flex;align-items:center;gap:16px}
+  .word{font-size:34px;font-weight:700;letter-spacing:.02em;color:#d6d3e4}
+  .badge{font-size:15px;font-weight:700;color:#0e0d16;background:#e8be3c;border-radius:5px;padding:2px 8px}
+  .badge.b16{background:#ff7a45}
+  .fav{display:flex;gap:22px;align-items:flex-end}
+  .chip{background:#14131f;border:1px solid #262438;border-radius:6px;padding:10px;display:flex;flex-direction:column;align-items:center;gap:8px}
+  .chip .cap{margin:0}
+  /* light-mode swatch */
+  .light{background:#faf8f2}
+  .light .word{color:#2b2833}
+</style></head>
+<body>
+
+<h2>The marks — 128px</h2>
+<div class="row">
+  <div class="pane"><img src="ember-mark-8.svg" width="128" height="128"><div class="cap">EMBER 8 · coal · 2 colors</div></div>
+  <div class="pane"><img src="ember-mark-16.svg" width="128" height="128"><div class="cap">EMBER 16 · flame · 3 colors</div></div>
+</div>
+
+<h2>Lockups (wordmark = real type, set later)</h2>
+<div class="row">
+  <div class="lockup"><img src="ember-mark-8.svg" width="44" height="44"><span class="word">ember</span><span class="badge">8</span></div>
+  <div class="lockup"><img src="ember-mark-16.svg" width="44" height="44"><span class="word">ember</span><span class="badge b16">16</span></div>
+</div>
+
+<h2>Favicon / small sizes — must stay legible</h2>
+<div class="row">
+  <div class="fav">
+    <div class="chip"><img src="ember-mark-8.svg" width="64" height="64"><span class="cap">64</span></div>
+    <div class="chip"><img src="ember-mark-8.svg" width="32" height="32"><span class="cap">32</span></div>
+    <div class="chip"><img src="ember-mark-8.svg" width="16" height="16"><span class="cap">16</span></div>
+  </div>
+  <div class="fav">
+    <div class="chip"><img src="ember-mark-16.svg" width="64" height="64"><span class="cap">64</span></div>
+    <div class="chip"><img src="ember-mark-16.svg" width="32" height="32"><span class="cap">32</span></div>
+    <div class="chip"><img src="ember-mark-16.svg" width="16" height="16"><span class="cap">16</span></div>
+  </div>
+</div>
+
+<h2>On light background</h2>
+<div class="row light" style="padding:24px;border-radius:8px">
+  <div class="lockup"><img src="ember-mark-8.svg" width="44" height="44"><span class="word">ember</span><span class="badge">8</span></div>
+  <div class="lockup"><img src="ember-mark-16.svg" width="44" height="44"><span class="word">ember</span><span class="badge b16">16</span></div>
+</div>
+
+</body></html>

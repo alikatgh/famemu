@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="Ember 16 mark">
+  <!-- Ember 16 — a taller flame from a coal: more, finer pixels, three colors. -->
+  <g shape-rendering="crispEdges">
+    <!-- base coal: deep red-orange #E8522A -->
+    <g fill="#E8522A">
+      <rect x="8"  y="32" width="4" height="4"/><rect x="36" y="32" width="4" height="4"/>
+      <rect x="12" y="36" width="4" height="4"/><rect x="16" y="36" width="4" height="4"/><rect x="20" y="36" width="4" height="4"/><rect x="24" y="36" width="4" height="4"/><rect x="28" y="36" width="4" height="4"/><rect x="32" y="36" width="4" height="4"/>
+      <rect x="16" y="40" width="4" height="4"/><rect x="20" y="40" width="4" height="4"/><rect x="24" y="40" width="4" height="4"/><rect x="28" y="40" width="4" height="4"/>
+    </g>
+    <!-- body: ember orange #FF7A45 -->
+    <g fill="#FF7A45">
+      <rect x="20" y="4"  width="4" height="4"/>
+      <rect x="20" y="8"  width="4" height="4"/><rect x="24" y="8"  width="4" height="4"/>
+      <rect x="16" y="12" width="4" height="4"/><rect x="20" y="12" width="4" height="4"/><rect x="24" y="12" width="4" height="4"/>
+      <rect x="16" y="16" width="4" height="4"/><rect x="24" y="16" width="4" height="4"/><rect x="28" y="16" width="4" height="4"/>
+      <rect x="12" y="20" width="4" height="4"/><rect x="16" y="20" width="4" height="4"/><rect x="28" y="20" width="4" height="4"/>
+      <rect x="12" y="24" width="4" height="4"/><rect x="16" y="24" width="4" height="4"/><rect x="28" y="24" width="4" height="4"/><rect x="32" y="24" width="4" height="4"/>
+      <rect x="8"  y="28" width="4" height="4"/><rect x="12" y="28" width="4" height="4"/><rect x="28" y="28" width="4" height="4"/><rect x="32" y="28" width="4" height="4"/>
+      <rect x="8"  y="32" width="0" height="0"/>
+      <rect x="12" y="32" width="4" height="4"/><rect x="16" y="32" width="4" height="4"/><rect x="28" y="32" width="4" height="4"/><rect x="32" y="32" width="4" height="4"/>
+    </g>
+    <!-- hot core: bright gold #FFE9A8 -->
+    <g fill="#FFE9A8">
+      <rect x="20" y="16" width="4" height="4"/>
+      <rect x="20" y="20" width="4" height="4"/><rect x="24" y="20" width="4" height="4"/>
+      <rect x="20" y="24" width="4" height="4"/><rect x="24" y="24" width="4" height="4"/>
+      <rect x="16" y="28" width="4" height="4"/><rect x="20" y="28" width="4" height="4"/><rect x="24" y="28" width="4" height="4"/>
+      <rect x="20" y="32" width="4" height="4"/><rect x="24" y="32" width="4" height="4"/>
+    </g>
+  </g>
+</svg>

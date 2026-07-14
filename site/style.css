@@ -338,3 +338,7 @@ table.mtx td.g { font-family: var(--mono); font-size: 12px; color: var(--dim); }
 
 .kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em;
           text-transform: uppercase; color: var(--ember); margin-bottom: 10px; }
+
+/* brand mark in the header — pixel flame, aligned to the wordmark baseline */
+.brandmark { display: inline-block; vertical-align: -3px; margin-right: 2px;
+             image-rendering: pixelated; }
