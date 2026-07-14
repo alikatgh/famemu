@@ -80,11 +80,13 @@ int main(int argc, char** argv) {
                     pcm.insert(pcm.end(), chunk, chunk + got * 2);
             }
             if (getenv("SNES_DEBUG_ZP"))
-                { uint8_t cm[4]; sys.ppu().dbg_colormath(cm);
-                std::fprintf(stderr, "f=%d mode=%d gstate=%d pc=%02X:%04X song=%d cgadsub=%02X coldata=%d,%d,%d\n",
+                { uint8_t cm[8]; sys.ppu().dbg_colormath(cm);
+                std::fprintf(stderr, "f=%d mode=%d gstate=%d pos=%d,%d pc=%02X:%04X song=%d cgadsub=%02X coldata=%d,%d,%d ts=%02X cgwsel=%02X bg2sc=%02X bg12nba=%02X\n",
                              frame, sys.wram_byte(58), sys.wram_byte(57),
+                             sys.wram_byte(4) | (sys.wram_byte(5) << 8),
+                             sys.wram_byte(6) | (sys.wram_byte(7) << 8),
                              sys.cpu().pbr, sys.cpu().pc, sys.spc_song(),
-                             cm[0], cm[1], cm[2], cm[3]); }
+                             cm[0], cm[1], cm[2], cm[3], cm[4], cm[5], cm[6], cm[7]); }
         }
         if (frames > 0) {
             std::snprintf(path, sizeof path, "%s_%04d.ppm", prefix.c_str(), frame);

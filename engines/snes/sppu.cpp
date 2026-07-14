@@ -15,12 +15,17 @@ void SPpu::write(uint8_t reg, uint8_t v) {
             break;
         case 0x05: bgmode_ = v; break;
         case 0x07: bg1sc_ = v; break;
+        case 0x08: bg2sc_ = v; break;
         case 0x09: bg3sc_ = v; break;
         case 0x0B: bg12nba_ = v; break;
         case 0x0C: bg34nba_ = v; break;
         case 0x0D: bg1hofs_ = static_cast<uint16_t>((v << 8) | scroll_latch_) & 0x3FF;
                    scroll_latch_ = v; break;   // write-twice: new<<8|prev, simplified
         case 0x0E: bg1vofs_ = static_cast<uint16_t>((v << 8) | scroll_latch_) & 0x3FF;
+                   scroll_latch_ = v; break;
+        case 0x0F: bg2hofs_ = static_cast<uint16_t>((v << 8) | scroll_latch_) & 0x3FF;
+                   scroll_latch_ = v; break;
+        case 0x10: bg2vofs_ = static_cast<uint16_t>((v << 8) | scroll_latch_) & 0x3FF;
                    scroll_latch_ = v; break;
         case 0x11: bg3hofs_ = static_cast<uint16_t>((v << 8) | scroll_latch_) & 0x3FF;
                    scroll_latch_ = v; break;
@@ -48,6 +53,8 @@ void SPpu::write(uint8_t reg, uint8_t v) {
             }
             break;
         case 0x2C: tm_ = v; break;
+        case 0x2D: ts_ = v; break;
+        case 0x30: cgwsel_ = v; break;
         case 0x31: cgadsub_ = v; break;
         case 0x32:  // COLDATA: bit5/6/7 select channels, low 5 bits intensity
             if (v & 0x20) coldata_r_ = v & 0x1F;
@@ -62,17 +69,23 @@ uint8_t SPpu::read(uint8_t) { return 0; }
 
 void SPpu::fetch_bg_pixel(int bg, int x, int y, Pixel& out) {
     out.color_idx = 0;
-    const bool is_bg1 = (bg == 0);
-    const uint8_t sc = is_bg1 ? bg1sc_ : bg3sc_;
+    const uint8_t sc = (bg == 0) ? bg1sc_ : (bg == 1) ? bg2sc_ : bg3sc_;
     // Mode 0: every BG is 2bpp (BG1 palette base 0, BG3 base 64).
-    // Mode 1: BG1 4bpp, BG3 2bpp (KORA's mode). Others: treated as mode 1.
+    // Mode 1: BG1/BG2 4bpp, BG3 2bpp (KORA's mode). Others: treated as mode 1.
     const int mode = bgmode_ & 7;
-    const int bpp = (mode == 0) ? 2 : (is_bg1 ? 4 : 2);
-    // $210B/$210C: LOW nibble = BG1/BG3, high nibble = BG2/BG4.
-    const uint16_t tile_base =
-        static_cast<uint16_t>(((is_bg1 ? bg12nba_ : bg34nba_) & 0x0F) << 12);
-    const int sx = (x + (is_bg1 ? bg1hofs_ : bg3hofs_)) & 0x3FF;
-    const int sy = (y + (is_bg1 ? bg1vofs_ : bg3vofs_)) & 0x3FF;
+    const int bpp = (mode == 0) ? 2 : (bg == 2 ? 2 : 4);
+    // $210B/$210C: LOW nibble = BG1/BG3, HIGH nibble = BG2/BG4.
+    const uint8_t nba = (bg == 0)   ? (bg12nba_ & 0x0F)
+                        : (bg == 1) ? (bg12nba_ >> 4)
+                                    : (bg34nba_ & 0x0F);
+    const uint16_t tile_base = static_cast<uint16_t>(nba << 12);
+    const uint16_t hofs = (bg == 0) ? bg1hofs_ : (bg == 1) ? bg2hofs_ : bg3hofs_;
+    const uint16_t vofs = (bg == 0) ? bg1vofs_ : (bg == 1) ? bg2vofs_ : bg3vofs_;
+    const int sx = (x + hofs) & 0x3FF;
+    // fb row y is hardware scanline y+1 (the PPU never displays scanline 0),
+    // so BG sampling is offset by one; OBJ needs no offset because OAM Y is
+    // itself "appears one line below Y", which cancels in fb-row space.
+    const int sy = (y + 1 + vofs) & 0x3FF;
 
     // Tilemap: base + 32x32 screens arranged by SC size bits.
     uint16_t map_base = static_cast<uint16_t>((sc >> 2) << 10);  // word addr
@@ -108,14 +121,14 @@ void SPpu::fetch_bg_pixel(int bg, int x, int y, Pixel& out) {
     if (idx == 0) return;  // transparent
 
     // Palette mapping: 4bpp = 16-color palettes; 2bpp = 4-color palettes,
-    // with mode-0's per-BG base offset (BG1 +0, BG3 +64).
+    // with mode-0's per-BG base offset (BG1 +0, BG2 +32, BG3 +64).
     if (bpp == 4) {
         out.color_idx = static_cast<uint8_t>(pal * 16 + idx);
     } else {
-        const int base = (mode == 0 && !is_bg1) ? 64 : 0;
+        const int base = (mode == 0) ? bg * 32 : 0;
         out.color_idx = static_cast<uint8_t>(base + pal * 4 + idx);
     }
-    out.layer = is_bg1 ? kBG1 : kBG3;
+    out.layer = static_cast<uint8_t>(bg);
 }
 
 bool SPpu::fetch_obj_pixel(int x, int y, Pixel& out) {
@@ -170,6 +183,36 @@ bool SPpu::fetch_obj_pixel(int x, int y, Pixel& out) {
     return found;
 }
 
+// Resolve the topmost visible pixel among the layers enabled in `mask`
+// (a TM/TS-style designation), in canonical Mode-1 order.
+SPpu::Pixel SPpu::resolve_screen(uint8_t mask, int x, int y) {
+    Pixel bg1{0, kBACK, 0}, bg2{0, kBACK, 0}, bg3{0, kBACK, 0}, obj{0, kBACK, 0};
+    bool has_obj = false;
+    if (mask & 0x01) fetch_bg_pixel(0, x, y, bg1);
+    if (mask & 0x02) fetch_bg_pixel(1, x, y, bg2);
+    if (mask & 0x04) fetch_bg_pixel(2, x, y, bg3);
+    if (mask & 0x10) has_obj = fetch_obj_pixel(x, y, obj);
+
+    const bool bg3_prio_mode = bgmode_ & 0x08;
+    Pixel px{0, kBACK, 0};
+    auto pick = [&](const Pixel& c) {
+        if (c.color_idx || c.layer == kOBJ) px = c;
+    };
+    // back to front, later picks override
+    if (bg3.color_idx && !bg3.prio) pick(bg3);
+    if (has_obj && obj.prio == 0) pick(obj);
+    if (bg3.color_idx && bg3.prio && !bg3_prio_mode) pick(bg3);
+    if (has_obj && obj.prio == 1) pick(obj);
+    if (bg2.color_idx && !bg2.prio) pick(bg2);
+    if (bg1.color_idx && !bg1.prio) pick(bg1);
+    if (has_obj && obj.prio == 2) pick(obj);
+    if (bg2.color_idx && bg2.prio) pick(bg2);
+    if (bg1.color_idx && bg1.prio) pick(bg1);
+    if (has_obj && obj.prio == 3) pick(obj);
+    if (bg3.color_idx && bg3.prio && bg3_prio_mode) pick(bg3);
+    return px;
+}
+
 void SPpu::render_line(int y) {
     uint8_t* row = fb_ + static_cast<size_t>(y) * kWidth * 3;
     if (inidisp_ & 0x80) {  // force blank
@@ -177,47 +220,37 @@ void SPpu::render_line(int y) {
         return;
     }
     const float bright = static_cast<float>(inidisp_ & 0x0F) / 15.0f;
-    const bool bg3_prio_mode = bgmode_ & 0x08;
 
     for (int x = 0; x < kWidth; ++x) {
-        // Gather layer pixels.
-        Pixel bg1{0, kBACK, 0}, bg3{0, kBACK, 0}, obj{0, kBACK, 0};
-        bool has_obj = false;
-        if (tm_ & 0x01) fetch_bg_pixel(0, x, y, bg1);
-        if (tm_ & 0x04) fetch_bg_pixel(2, x, y, bg3);
-        if (tm_ & 0x10) has_obj = fetch_obj_pixel(x, y, obj);
-
-        // Mode-1 priority resolution (no BG2; KORA's TM=$15).
-        Pixel px{0, kBACK, 0};
-        auto pick = [&](const Pixel& c) {
-            if (c.color_idx || c.layer == kOBJ) px = c;
-        };
-        // lowest first, later picks override
-        if (bg3.color_idx && !bg3.prio && !bg3_prio_mode) pick(bg3);
-        if (has_obj && obj.prio == 0) pick(obj);
-        if (bg3.color_idx && !bg3.prio && bg3_prio_mode) pick(bg3);
-        if (has_obj && obj.prio == 1) pick(obj);
-        if (bg1.color_idx && !bg1.prio) pick(bg1);
-        if (has_obj && obj.prio == 2) pick(obj);
-        if (bg1.color_idx && bg1.prio) pick(bg1);
-        if (has_obj && obj.prio == 3) pick(obj);
-        if (bg3.color_idx && bg3.prio && bg3_prio_mode) pick(bg3);
+        const Pixel px = resolve_screen(tm_, x, y);
 
         uint16_t c15 = cg_color(px.color_idx);
         int r = (c15 & 0x1F), g = (c15 >> 5) & 0x1F, b = (c15 >> 10) & 0x1F;
 
-        // Color math: fixed-color add/sub on selected layers (KORA: subtract
-        // COLDATA from BG1 + backdrop for day/night).
+        // Color math on the layers selected in CGADSUB. The operand is the
+        // subscreen pixel when CGWSEL bit1 is set and one is opaque there
+        // (KORA: BG2 cloud shadows on TS), else the COLDATA fixed color —
+        // and half-math never applies to the fixed-color fallback.
         const uint8_t layer_bit =
-            (px.layer == kBG1) ? 0x01 : (px.layer == kBG3) ? 0x04
+            (px.layer <= kBG3) ? static_cast<uint8_t>(1 << px.layer)
             : (px.layer == kOBJ) ? 0x10 : 0x20;
-        if (cgadsub_ & layer_bit) {
-            if (cgadsub_ & 0x80) {  // subtract
-                r -= coldata_r_; g -= coldata_g_; b -= coldata_b_;
-            } else {
-                r += coldata_r_; g += coldata_g_; b += coldata_b_;
+        // OBJ palettes 0-3 (color_idx 128-191) never participate in math.
+        const bool obj_exempt = px.layer == kOBJ && px.color_idx < 192;
+        if ((cgadsub_ & layer_bit) && !obj_exempt) {
+            int sr = coldata_r_, sg = coldata_g_, sb = coldata_b_;
+            bool half = cgadsub_ & 0x40;
+            if (cgwsel_ & 0x02) {
+                const Pixel sub = resolve_screen(ts_, x, y);
+                if (sub.layer != kBACK) {
+                    const uint16_t s15 = cg_color(sub.color_idx);
+                    sr = s15 & 0x1F; sg = (s15 >> 5) & 0x1F; sb = (s15 >> 10) & 0x1F;
+                } else {
+                    half = false;  // fixed-color fallback: no halving
+                }
             }
-            if (cgadsub_ & 0x40) { r >>= 1; g >>= 1; b >>= 1; }  // half
+            if (cgadsub_ & 0x80) { r -= sr; g -= sg; b -= sb; }
+            else                 { r += sr; g += sg; b += sb; }
+            if (half) { r >>= 1; g >>= 1; b >>= 1; }
             r = r < 0 ? 0 : (r > 31 ? 31 : r);
             g = g < 0 ? 0 : (g > 31 ? 31 : g);
             b = b < 0 ? 0 : (b > 31 ? 31 : b);

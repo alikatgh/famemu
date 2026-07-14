@@ -30,6 +30,12 @@ Before reproducing, grep this list for the shape of your bug.
   plain configure** — after adding a fatal dep check, grep the project's own
   `cmake`/CI/script invocations and pass the new opt-out where appropriate;
   a per-file review won't surface this cross-file interaction.
+- **PPU off-by-ones hide in BG/OBJ asymmetry** — NES: sprite rows are OAM
+  Y+1; SNES: fb row 0 is scanline 1 (BG needs +1, OBJ doesn't). Verify with
+  a cross-emulator pixel diff or alignment test ROM, never by eye.
+- **A "scoped to game X" emulator rots as game X grows** — re-diff against
+  a reference emulator through scripted GAMEPLAY (movement, state changes),
+  not just the boot/title frame; align game time (boot pad), not host time.
 
 ---
 
@@ -49,6 +55,24 @@ script name → one-line "what bug it was built to catch".
 ## Chronological log
 
 Newest first. Five lines max per entry. File:line citations beat prose.
+
+### 2026-07-14 · SNES BG rendered one scanline low (scanline 0 is never displayed)
+Symptom: kora.sfc famemu frame == snes9x frame rolled up 1px (33% pixel mismatch, dy=-1 → mean diff 1.1).
+Cause: sppu.cpp fetch_bg_pixel sampled BG line y+VOFS for fb row y; hardware shows scanlines 1-224, so fb row y is scanline y+1.
+Fix: sy = y + 1 + VOFS (sppu.cpp); OBJ unchanged — OAM "appears at Y+1" cancels in fb-row space.
+**Lesson:** SNES fb row 0 = scanline 1; BG needs the +1, sprites don't. Same family as the NES OAM Y+1 entry below — every PPU has an off-by-one pact between BG and OBJ; verify with a cross-emulator pixel diff, not eyeballing.
+
+### 2026-07-14 · Day/night subtract ignored the subscreen (BG2 cloud shadows missing)
+Symptom: in-game kora.sfc frames 22% off vs snes9x — soft circles darker in snes9x, uniform elsewhere.
+Cause: sppu.cpp color math always used COLDATA; KORA sets CGWSEL=$02 + TS=$02 (kora.s:237): subtract the SUBSCREEN (BG2 cloud blobs), fixed colour only where it's transparent.
+Fix: BG2 layer + $2108/$210F/$2110/$212D/$2130 regs; resolve_screen(TS) as math operand, COLDATA fallback (no halving on fallback).
+**Lesson:** "scoped-to-one-game" PPUs rot silently as the game grows — diff against a reference emulator through real GAMEPLAY input scripts, not just the title screen; kora/snes/verify_famemu.sh now does exactly that.
+
+### 2026-07-14 · Lockstep cross-emulator diffs need a boot-length offset
+Symptom: verify_famemu.sh cloud/ripple animations phase-shifted between famemu and snes9x on identical input scripts.
+Cause: famemu's coarse timing finishes KORA's init ~4 host-frames before snes9x, so `frame`-driven animation (BG2HOFS drift kora.s:3010, ripple kora.s:338) disagrees at equal host frames.
+Fix: famemu gets a 20-frame boot pad vs dump_ppm's 24 (kora/snes/verify_famemu.sh); animation granularity (1px per 8f) forgives the residual.
+**Lesson:** frame-lockstep comparisons between emulators must align GAME time, not host time — pad boot until an animation-phase probe matches, and beware macOS `seq 1 0` emitting "1 0" (it counts down): use `for ((i=0;i<n;i++))` in harnesses.
 
 ### 2026-07-14 · PPU background rendered 1px left (reload/shift order)
 Symptom: blargg sprite_hit 02.alignment FAILED #3 — sprite "hit" a bg tile it shouldn't touch; hit fired at x=127 for a tile at x=128.
