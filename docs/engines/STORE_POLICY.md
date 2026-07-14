@@ -35,11 +35,30 @@ free, curated games are paid. That only works if every title is clean.
 
 ## Distribution and signing
 
-Store titles ship as signed cartridge images; the app runs only
-store-signed content plus the developer's own sideloaded builds in dev
-mode. The app is a curated games platform — it does not browse, download,
-or execute arbitrary ROMs, and nothing in the UI or listing may suggest it
-plays historical commercial games.
+Store titles ship as signed cartridge images; the app runs only store-signed
+content plus the developer's own sideloaded builds in Developer Mode. The app
+is a curated games platform — it does not browse, download, or execute
+arbitrary ROMs, and nothing in the UI or listing may suggest it plays
+historical commercial games.
+
+**How it works (implemented).** The store signs each cartridge with an
+Ed25519 key: a detached signature over the exact cartridge bytes, distributed
+as a sidecar `<cart>.emsig`. The app bundles only the store's *public* key and
+verifies with CryptoKit before a cartridge is allowed to run
+(`CartridgeSecurity` in the app; `isValidSignature(sig, for: romBytes)`).
+A cartridge whose signature is missing or invalid is a *sideload*:
+
+- **Off (default, App Store builds):** only store-signed cartridges run. An
+  unsigned cartridge is blocked with a clear message.
+- **Developer Mode on (Settings, or a DEBUG build / `FAMEMU_DEV=1`):**
+  unsigned cartridges you sideload also run — how you test your own game.
+
+Signing is done offline with `famemu/scripts/ember-store-sign.py`
+(`keygen` / `sign` / `verify` / `pubkey`). The private key is the store's
+crown jewel — held offline, never committed; rotate by re-keying, re-embedding
+the new public key, and re-signing the catalog. The signer (Python Ed25519)
+and the verifier (CryptoKit Curve25519) are interoperable — checked by
+signing the free game and verifying it from both sides.
 
 ## Revenue
 

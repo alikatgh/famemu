@@ -11,11 +11,13 @@ compiled into the host app (App Sandbox wants one self-contained process).
 ```c
 #include "famemu_core.h"
 
-const FamemuCoreAPI* core = famemu_snes_core();   /* Ember 16 */
-const FamemuCoreAPI* core8 = famemu_nes_core();   /* Ember 8  */
+const FamemuCoreAPI* core16 = famemu_ember16_core();  /* Ember 16 */
+const FamemuCoreAPI* core8  = famemu_ember8_core();   /* Ember 8  */
 ```
 
-Each returns a vtable of function pointers; `system_id` names the engine.
+Each returns a vtable of function pointers; `system_id` is `"ember16"` /
+`"ember8"`. The older `famemu_snes_core()` / `famemu_nes_core()` accessors
+remain as ABI-stable aliases returning the same vtables.
 
 ## Lifecycle
 

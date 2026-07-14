@@ -46,7 +46,7 @@ int snes_state_load(const uint8_t* buf, size_t len) {
 }
 
 const FamemuCoreAPI kSnesApi = {
-    "snes",
+    "ember16",   // public engine name (was "snes"; kept as an alias below)
     snes_load_rom, snes_unload_rom, snes_reset, snes_run_frame,
     snes_video_rgb, snes_audio_read, snes_sample_rate, snes_set_input,
     snes_state_size, snes_state_save, snes_state_load,
@@ -54,4 +54,6 @@ const FamemuCoreAPI kSnesApi = {
 
 }  // namespace
 
+// Canonical accessor + legacy alias (same vtable). Callers may use either.
+extern "C" const FamemuCoreAPI* famemu_ember16_core(void) { return &kSnesApi; }
 extern "C" const FamemuCoreAPI* famemu_snes_core(void) { return &kSnesApi; }
