@@ -21,6 +21,20 @@ Built on [GOROman's `famicom-rf-hackrf-decoder`](https://github.com/GOROman/fami
 (MIT) — the RF decoder at the heart of this project is his work (see
 [Credits](#credits--license)).
 
+---
+
+## <img src="brand/png/ember-flame-512.png" width="28" align="top" alt=""> Ember game engines
+
+This repo also houses **Ember 8** and **Ember 16** — free, open-source game
+engines with the exact constraints of classic 8-bit and 16-bit console
+hardware. You write a genuine cartridge image with a standard 6502 / 65816
+toolchain; it runs in the famemu app and ships on the famemu store. Not an
+emulator front-end — fantasy consoles with real-hardware behavior, verified
+frame-for-frame against reference silicon (43 lockstep frames + 66 golden
+screens at 0.000% divergence).
+
+→ **[Engine docs](docs/engines/README.md)** · **[Public state / feature matrix](site/state.html)** · **[Developer guide](docs/engines/DEVELOPER_GUIDE.md)** · **[Brand assets](brand/README.md)**
+
 ## Quick start
 
 ```sh
@@ -165,7 +179,10 @@ src/source, src/ui  HackRF input, SDL display/audio
 tools/              famitv_play.cpp (ROM player), famitv_loopback.cpp (demo)
 scripts/famitv.sh   build-and-play launcher
 tests/              synth_ntsc golden test
-docs/               audits, bug journal, distribution notes
+engines/            Ember 8 (nes/) + Ember 16 (snes/) cores behind one C ABI
+docs/               audits, bug journal, distribution notes, engines/ (Ember docs)
+site/               public Ember marketing + engine-state pages
+brand/              Ember logo marks (SVG) + favicon/PNG exports
 ```
 
 ## Credits / license
