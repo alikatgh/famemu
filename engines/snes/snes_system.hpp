@@ -1,14 +1,21 @@
-// famemu SNES engine — the machine: 65816 + S-PPU + WRAM + LoROM + DMA +
-// APU-port IPL stub, scoped to boot KORA (docs/PLATFORM.md, NIGHTLOG).
+// famemu SNES engine — the machine: 65816 + S-PPU + WRAM + LoROM/HiROM +
+// DMA/HDMA + APU-port IPL bridge + SPC700/S-DSP, general-purpose scope
+// (docs/PLATFORM.md, NIGHTLOG).
 //
-// Timing model: coarse. cpu.cyc ticks ~1/memory access; a scanline is
-// budgeted at 190 such cycles (~1364 master / 6 with fudge), 262 lines/frame,
-// NMI + auto-joypad at line 225. KORA's loop syncs on NMI, so frame-level
-// behavior is right even though per-instruction timing is approximate.
+// Timing model: master cycles (21.477 MHz). Each bus access costs its
+// region's real speed (6 fast / 8 slow / 12 joypad, FastROM via $420D);
+// internal CPU cycles cost 6. A scanline is 1364 master cycles, 262
+// lines/frame (NTSC), NMI at the vblank line ($4210 RDNMI + $4200 NMITIMEN),
+// H/V IRQ timers ($4207-$420A, $4211 TIMEUP), auto-joypad $4218-$421F.
+// DMA/HDMA steal CPU time at 8 master cycles/byte.
+//
+// Mapping: LoROM and HiROM, scored from the ROM header ($7FC0/$FFC0).
+// Coprocessors: SA-1 (sa1.hpp) and SuperFX/GSU (superfx.hpp), detected from
+// the header chip byte and interleaved with the main CPU per scanline.
 //
 // Audio: $2140-43 implement the IPL ROM's transfer protocol on the main-CPU
 // side, capturing the uploaded driver into real ARAM; the kickoff starts a
-// real SPC700 (driver-scoped core, spc700.hpp) driving a real S-DSP (BRR
+// real SPC700 (full instruction set, spc700.hpp) driving a real S-DSP (BRR
 // voices + ADSR + echo, sdsp.hpp) at 32 kHz.
 #pragma once
 
@@ -24,72 +31,26 @@
 
 namespace famemu::snes {
 
+class Sa1;       // sa1.hpp
+class SuperFx;   // superfx.hpp
+
 class SnesSystem : public Bus16 {
 public:
-    SnesSystem() : cpu_(*this) {}
+    static constexpr int kLineCycles = 1364;   // master cycles per scanline
+    static constexpr int kLinesPerFrame = 262; // NTSC
 
-    bool load_rom(const uint8_t* data, size_t len) {
-        if (len < 0x8000) return false;
-        if (len % 0x8000 == 512) { data += 512; len -= 512; }  // copier header
-        rom_.assign(data, data + len);
-        power_on();
-        return true;
-    }
+    enum class Mapping : uint8_t { LoROM = 0, HiROM = 1 };
 
-    void power_on() {
-        std::memset(wram_, 0, sizeof wram_);
-        std::memset(sram_, 0, sizeof sram_);
-        std::memset(dma_, 0, sizeof dma_);
-        ppu_.reset();
-        nmitimen_ = 0;
-        rdnmi_ = 0;
-        hdmaen_ = hdma_term_ = hdma_do_ = 0;
-        in_vblank_ = false;
-        joy1_ = 0;
-        buttons_ = 0;
-        spc_.reset();
-        dsp_.reset();
-        spc_.set_dsp(&dsp_);
-        ipl_transfer_ = false;
-        ipl_addr_ = 0;
-        ipl_last_index_ = 0xFF;
-        ipl_ports_[0] = ipl_ports_[1] = ipl_ports_[2] = ipl_ports_[3] = 0;
-        sample_acc_ = 0.0;
-        line_ = 0;
-        cpu_.reset();
-    }
+    SnesSystem();
+    ~SnesSystem();
 
-    void set_buttons(uint32_t famemu_core_buttons) { buttons_ = famemu_core_buttons; }
+    bool load_rom(const uint8_t* data, size_t len);
+    void power_on();
 
-    void run_frame() {
-        for (line_ = 0; line_ < 262; ++line_) {
-            const uint64_t budget = cpu_.cyc + 190;
-            if (line_ == 225) {
-                in_vblank_ = true;
-                rdnmi_ |= 0x80;
-                latch_joypad();
-                if (nmitimen_ & 0x80) cpu_.nmi();
-            } else if (line_ == 0) {
-                in_vblank_ = false;
-                // Init only: the first transfer lands with fb row 0's step
-                // below. (snes9x's visible-row mapping: row y = entry line
-                // y+1 of the table; hardware's extra scanline-0 slot is not
-                // modeled — revisit if we ever golden against hardware.)
-                hdma_init();
-            }
-            while (cpu_.cyc < budget && !cpu_.stopped) cpu_.step();
-            spc_.run(65);  // ~1.024 MHz / 15734 lines
-            if (line_ < SPpu::kHeight) {
-                hdma_step();       // fb row y = scanline y+1
-                ppu_.render_line(line_);
-            }
-        }
-        // 32 kHz DSP output: 32000 / 60.0988 fps ≈ 532.5 samples per frame.
-        sample_acc_ += 32000.0 / 60.0988;
-        const int n = static_cast<int>(sample_acc_);
-        sample_acc_ -= n;
-        dsp_.render(n);
-    }
+    void set_buttons(uint32_t famemu_core_buttons) { buttons_[0] = famemu_core_buttons; }
+    void set_buttons2(uint32_t famemu_core_buttons) { buttons_[1] = famemu_core_buttons; }
+
+    void run_frame();
 
     size_t read_audio(int16_t* out, size_t max_frames) {
         return dsp_.read_samples(out, max_frames);
@@ -99,88 +60,67 @@ public:
     Cpu65816& cpu() { return cpu_; }
     SPpu& ppu() { return ppu_; }
     uint8_t wram_byte(uint32_t i) const { return wram_[i & 0x1FFFF]; }  // debug
+    Mapping mapping() const { return mapping_; }
+    bool has_sa1() const { return sa1_ != nullptr; }
+    bool has_superfx() const { return sfx_ != nullptr; }
 
     // ---- save states (same writer/reader as the NES engine) -------------
-    static constexpr uint32_t kStateMagic = 0x46534E31;  // "FSN1"
+    static constexpr uint32_t kStateMagic = 0x46534E32;  // "FSN2"
 
-    size_t state_size() const {
-        return 8 + 64 + sizeof wram_ + sizeof sram_ + sizeof dma_ + 64 +
-               (sizeof(SPpu)) + (sizeof(Spc700)) + (sizeof(SDsp)) + 256;
-    }
-    bool state_save(uint8_t* buf, size_t len) {
-        famemu::nes::StateWriter w{buf, len};
-        w.io(kStateMagic);
-        serialize_all(w);
-        return w.ok;
-    }
-    bool state_load(const uint8_t* buf, size_t len) {
-        famemu::nes::StateReader r{buf, len};
-        uint32_t magic = 0;
-        r.io(magic);
-        if (magic != kStateMagic) return false;
-        serialize_all(r);
-        if (r.ok) dsp_.post_load();
-        return r.ok;
-    }
+    size_t state_size() const;
+    bool state_save(uint8_t* buf, size_t len);
+    bool state_load(const uint8_t* buf, size_t len);
     uint8_t spc_song() const { return spc_.is_running() ? spc_dbg_port0_ : 0xFF; }  // debug
 
     // ---- Bus16 -----------------------------------------------------------
-    uint8_t read(uint32_t a24) override {
+    uint8_t read(uint32_t a24) override;
+    void write(uint32_t a24, uint8_t v) override;
+    int speed(uint32_t a24) const override {
         const uint8_t bank = (a24 >> 16) & 0xFF;
         const uint16_t off = a24 & 0xFFFF;
-        if (bank == 0x7E) return wram_[off];
-        if (bank == 0x7F) return wram_[0x10000 + off];
-        const uint8_t b = bank & 0x7F;
-        if (b <= 0x3F) {
-            if (off < 0x2000) return wram_[off];
-            if (off >= 0x2140 && off <= 0x217F) return apu_read((off - 0x2140) & 3);
-            if (off >= 0x2100 && off < 0x2140) return ppu_.read(off & 0xFF);
-            if (off == 0x4210) { uint8_t r = rdnmi_ | 0x02; rdnmi_ &= 0x7F; return r; }
-            if (off == 0x4212) return static_cast<uint8_t>(in_vblank_ ? 0x80 : 0x00);
-            if (off == 0x4218) return static_cast<uint8_t>(joy1_);
-            if (off == 0x4219) return static_cast<uint8_t>(joy1_ >> 8);
-            if (off >= 0x8000) return rom_at(b, off);
-            return 0;
-        }
-        if (b >= 0x70 && b <= 0x7D && off < 0x8000)
-            return sram_[off & (sizeof sram_ - 1)];
-        return rom_at(b, off >= 0x8000 ? off : static_cast<uint16_t>(off | 0x8000));
+        if (bank >= 0x40 && bank <= 0x7F) return 8;              // ROM/SRAM/WRAM
+        if (bank >= 0xC0) return (memsel_ & 1) ? 6 : 8;          // HiROM upper
+        // banks 00-3F / 80-BF
+        if (off < 0x2000) return 8;                               // WRAM mirror
+        if (off < 0x4000) return 6;                               // PPU/APU I/O
+        if (off < 0x4200) return 12;                              // joypad serial
+        if (off < 0x6000) return 6;                               // CPU I/O
+        if (off < 0x8000) return 8;                               // expansion
+        return ((bank & 0x80) && (memsel_ & 1)) ? 6 : 8;          // ROM
     }
 
-    void write(uint32_t a24, uint8_t v) override {
-        const uint8_t bank = (a24 >> 16) & 0xFF;
-        const uint16_t off = a24 & 0xFFFF;
-        if (bank == 0x7E) { wram_[off] = v; return; }
-        if (bank == 0x7F) { wram_[0x10000 + off] = v; return; }
-        const uint8_t b = bank & 0x7F;
-        if (b <= 0x3F) {
-            if (off < 0x2000) { wram_[off] = v; return; }
-            if (off >= 0x2140 && off <= 0x217F) { apu_write((off - 0x2140) & 3, v); return; }
-            if (off >= 0x2100 && off < 0x2140) { ppu_.write(off & 0xFF, v); return; }
-            if (off == 0x4200) { nmitimen_ = v; return; }
-            if (off == 0x420B) { run_dma(v); return; }
-            if (off == 0x420C) { hdmaen_ = v; return; }
-            if (off >= 0x4300 && off < 0x4380) { dma_[off - 0x4300] = v; return; }
-            return;
-        }
-        if (b >= 0x70 && b <= 0x7D && off < 0x8000)
-            sram_[off & (sizeof sram_ - 1)] = v;
-    }
+    // ROM/SRAM access for coprocessors.
+    uint8_t rom_linear(uint32_t i) const { return rom_.empty() ? 0 : rom_[i % rom_.size()]; }
+    size_t rom_size() const { return rom_.size(); }
+    uint8_t* sram_data() { return sram_; }
+    uint32_t sram_mask() const { return sram_mask_; }
 
 private:
     Cpu65816 cpu_{*this};
     SPpu ppu_;
     std::vector<uint8_t> rom_;
     uint8_t wram_[0x20000];
-    uint8_t sram_[0x2000];
+    uint8_t sram_[0x20000];        // up to 128 KB, masked by header size
+    uint32_t sram_mask_ = 0x1FFF;
     uint8_t dma_[0x80];
+    Mapping mapping_ = Mapping::LoROM;
 
-    uint8_t nmitimen_ = 0, rdnmi_ = 0;
+    uint8_t nmitimen_ = 0, rdnmi_ = 0, timeup_ = 0, memsel_ = 0;
     uint8_t hdmaen_ = 0, hdma_term_ = 0, hdma_do_ = 0;
-    bool in_vblank_ = false;
-    uint16_t joy1_ = 0;
-    uint32_t buttons_ = 0;
+    bool in_vblank_ = false, irq_line_ = false;
+    uint16_t htime_ = 0x1FF, vtime_ = 0x1FF;
+    uint8_t wrmpya_ = 0xFF, wrmpyb_ = 0;
+    uint16_t wrdiv_ = 0xFFFF;
+    uint16_t rddiv_ = 0, rdmpy_ = 0;
+    uint32_t wmadd_ = 0;           // $2181-83 WRAM data-port address (17-bit)
+    uint16_t joy_[2] = {0, 0};     // auto-read results ($4218-421B)
+    uint32_t buttons_[2] = {0, 0};
+    bool joy_strobe_ = false;
+    uint16_t joy_shift_[2] = {0, 0};
+    int autojoy_busy_ = 0;         // lines remaining
+    uint8_t open_bus_ = 0;
     int line_ = 0;
+    uint64_t line_start_cyc_ = 0;
 
     // Audio subsystem + IPL transfer capture (see file header).
     Spc700 spc_;
@@ -192,191 +132,48 @@ private:
     double sample_acc_ = 0.0;
     uint8_t spc_dbg_port0_ = 0;
 
-    uint8_t rom_at(uint8_t bank7f, uint16_t off) const {
-        const size_t i = static_cast<size_t>(bank7f) * 0x8000 + (off - 0x8000);
+    // Coprocessors (owned; null unless the header names them).
+    Sa1* sa1_ = nullptr;
+    SuperFx* sfx_ = nullptr;
+
+    friend class Sa1;
+    friend class SuperFx;
+
+    static int score_header(const uint8_t* rom, size_t len, size_t hdr, bool hirom);
+    void detect_mapping_and_chips();
+
+    uint8_t rom_read(uint8_t bank7f, uint16_t off) const {
+        size_t i;
+        if (mapping_ == Mapping::HiROM) {
+            i = (static_cast<size_t>(bank7f & 0x3F) << 16) | off;
+        } else {
+            i = static_cast<size_t>(bank7f) * 0x8000 + (off & 0x7FFF);
+        }
         return rom_.empty() ? 0 : rom_[i % rom_.size()];
     }
 
-    void latch_joypad() {
-        // FamemuCoreButton -> SNES JOY1: $4219(hi)=B Y Sel St U D L R,
-        // $4218(lo)=A X L R 0000.
-        uint16_t j = 0;
-        if (buttons_ & (1u << 1)) j |= 0x8000;   // B
-        if (buttons_ & (1u << 9)) j |= 0x4000;   // Y
-        if (buttons_ & (1u << 2)) j |= 0x2000;   // Select
-        if (buttons_ & (1u << 3)) j |= 0x1000;   // Start
-        if (buttons_ & (1u << 4)) j |= 0x0800;   // Up
-        if (buttons_ & (1u << 5)) j |= 0x0400;   // Down
-        if (buttons_ & (1u << 6)) j |= 0x0200;   // Left
-        if (buttons_ & (1u << 7)) j |= 0x0100;   // Right
-        if (buttons_ & (1u << 0)) j |= 0x0080;   // A
-        if (buttons_ & (1u << 8)) j |= 0x0040;   // X
-        if (buttons_ & (1u << 10)) j |= 0x0020;  // L
-        if (buttons_ & (1u << 11)) j |= 0x0010;  // R
-        joy1_ = j;
+    void latch_joypads();
+    uint16_t pack_joy(uint32_t b) const;
+
+    uint8_t apu_read(int port);
+    void apu_write(int port, uint8_t v);
+
+    void hdma_init();
+    void hdma_load(int ch);
+    void hdma_step();
+    void run_dma(uint8_t enable);
+
+    int ppu_dot() const {   // current dot within the line, from CPU progress
+        const uint64_t d = (cpu_.cyc - line_start_cyc_) / 4;
+        return d > 339 ? 339 : static_cast<int>(d);
     }
 
-    uint8_t apu_read(int port) {
-        if (spc_.is_running()) return spc_.main_read_port(port);
-        // IPL ROM boot state / transfer echo.
-        if (!ipl_transfer_) return port == 0 ? 0xAA : (port == 1 ? 0xBB : 0);
-        return ipl_ports_[port];  // echoes written below
-    }
-
-    void apu_write(int port, uint8_t v) {
-        if (spc_.is_running()) {
-            if (port == 0) spc_dbg_port0_ = v;
-            spc_.main_write_port(port, v);
-            return;
-        }
-        const uint8_t prev0 = ipl_ports_[0];
-        if (port != 0) { ipl_ports_[port] = v; return; }
-        // Port-0 writes drive the IPL transfer protocol.
-        if (!ipl_transfer_) {
-            if (v == 0xCC && ipl_ports_[1] != 0) {
-                ipl_addr_ = static_cast<uint16_t>(ipl_ports_[2] |
-                                                  (ipl_ports_[3] << 8));
-                ipl_transfer_ = true;
-                ipl_last_index_ = 0xFF;  // next data byte is index 0
-            }
-            ipl_ports_[0] = v;  // echo
-            return;
-        }
-        const uint8_t expected = static_cast<uint8_t>(ipl_last_index_ + 1);
-        if (v == expected) {  // next data byte (port 1 holds it)
-            spc_.aram[ipl_addr_++] = ipl_ports_[1];
-            ipl_last_index_ = v;
-        } else if (v != prev0) {  // index jump: new block or execute
-            const uint16_t target = static_cast<uint16_t>(ipl_ports_[2] |
-                                                          (ipl_ports_[3] << 8));
-            if (ipl_ports_[1] == 0) {
-                spc_.start_at(target);  // kickoff: SPC700 begins execution
-            } else {
-                ipl_addr_ = target;     // additional block
-                ipl_last_index_ = 0xFF;
-            }
-        }
-        ipl_ports_[0] = v;  // echo
-    }
-
-    // ---- HDMA: per-scanline table-driven transfers ($420C + $43xx) --------
-    // Table format per entry: line-count byte (bit7 = repeat), then either
-    // the unit data inline (direct) or a 2-byte pointer (indirect, DMAP bit6).
-    void hdma_init() {
-        hdma_term_ = hdma_do_ = 0;
-        for (int ch = 0; ch < 8; ++ch) {
-            if (!(hdmaen_ & (1 << ch))) continue;
-            uint8_t* r = &dma_[ch * 0x10];
-            r[8] = r[2]; r[9] = r[3];          // A2A = table base A1T
-            hdma_load(ch);
-        }
-    }
-    void hdma_load(int ch) {                   // fetch the next table entry
-        uint8_t* r = &dma_[ch * 0x10];
-        const uint32_t bank = static_cast<uint32_t>(r[4]) << 16;
-        uint16_t a2a = static_cast<uint16_t>(r[8] | (r[9] << 8));
-        const uint8_t cnt = read(bank | a2a++);
-        r[0xA] = cnt;
-        if (cnt == 0) {
-            hdma_term_ |= static_cast<uint8_t>(1 << ch);
-        } else {
-            if (r[0] & 0x40) {                 // indirect: fetch data pointer
-                r[5] = read(bank | a2a++);
-                r[6] = read(bank | a2a++);
-            }
-            hdma_do_ |= static_cast<uint8_t>(1 << ch);
-        }
-        r[8] = a2a & 0xFF; r[9] = a2a >> 8;
-    }
-    void hdma_step() {                         // one scanline for all channels
-        static const uint8_t kOff[8][4] = {{0, 0, 0, 0}, {0, 1, 0, 0},
-                                           {0, 0, 0, 0}, {0, 0, 1, 1},
-                                           {0, 1, 2, 3}, {0, 1, 0, 1},
-                                           {0, 0, 0, 0}, {0, 0, 1, 1}};
-        static const int kLen[8] = {1, 2, 2, 4, 4, 4, 2, 4};
-        for (int ch = 0; ch < 8; ++ch) {
-            const uint8_t bit = static_cast<uint8_t>(1 << ch);
-            if (!(hdmaen_ & bit) || (hdma_term_ & bit)) continue;
-            uint8_t* r = &dma_[ch * 0x10];
-            if (hdma_do_ & bit) {
-                const int mode = r[0] & 7;
-                const bool ind = r[0] & 0x40;
-                const uint32_t bank = static_cast<uint32_t>(ind ? r[7] : r[4]) << 16;
-                uint16_t a = ind ? static_cast<uint16_t>(r[5] | (r[6] << 8))
-                                 : static_cast<uint16_t>(r[8] | (r[9] << 8));
-                for (int i = 0; i < kLen[mode]; ++i)
-                    write(0x2100u | static_cast<uint8_t>(r[1] + kOff[mode][i]),
-                          read(bank | a++));
-                if (ind) { r[5] = a & 0xFF; r[6] = a >> 8; }
-                else     { r[8] = a & 0xFF; r[9] = a >> 8; }
-            }
-            const uint8_t cnt = --r[0xA];
-            if ((cnt & 0x7F) == 0) {
-                hdma_load(ch);                 // sets do/terminated
-            } else if (cnt & 0x80) {
-                hdma_do_ |= bit;               // repeat: transfer every line
-            } else {
-                hdma_do_ &= static_cast<uint8_t>(~bit);
-            }
-        }
-    }
-
-    void run_dma(uint8_t enable) {
-        for (int ch = 0; ch < 8; ++ch) {
-            if (!(enable & (1 << ch))) continue;
-            uint8_t* r = &dma_[ch * 0x10];
-            const uint8_t ctrl = r[0];
-            const uint8_t breg = r[1];
-            uint32_t aaddr = static_cast<uint32_t>(r[2]) |
-                             (static_cast<uint32_t>(r[3]) << 8) |
-                             (static_cast<uint32_t>(r[4]) << 16);
-            uint32_t count = static_cast<uint32_t>(r[5]) |
-                             (static_cast<uint32_t>(r[6]) << 8);
-            if (count == 0) count = 0x10000;
-            const int mode = ctrl & 7;
-            const bool fixed = ctrl & 0x08;
-            const int step = (ctrl & 0x10) ? -1 : 1;
-            uint32_t n = 0;
-            while (count--) {
-                uint8_t breg_off = 0;
-                switch (mode) {
-                    case 0: breg_off = 0; break;
-                    case 1: breg_off = n & 1; break;            // l,h,l,h
-                    case 2: breg_off = 0; break;                // l,l
-                    case 3: breg_off = (n >> 1) & 1; break;     // l,l,h,h
-                    case 4: breg_off = n & 3; break;
-                    default: breg_off = n & 1; break;
-                }
-                if (ctrl & 0x80) {  // B -> A (rare; not used by KORA)
-                    wr_cpu(aaddr, read(0x2100u | (breg + breg_off)));
-                } else {
-                    write(0x2100u | static_cast<uint8_t>(breg + breg_off),
-                          read(aaddr));
-                }
-                if (!fixed) aaddr = (aaddr & 0xFF0000) |
-                                    ((aaddr + step) & 0xFFFF);
-                ++n;
-            }
-            r[5] = r[6] = 0;  // count drained
-        }
-    }
-    void wr_cpu(uint32_t a, uint8_t v) { write(a, v); }
+    void run_cpu_to(uint64_t target);
 
     template <class S>
-    void serialize_all(S& s) {
-        s.io(cpu_.a); s.io(cpu_.x); s.io(cpu_.y); s.io(cpu_.s); s.io(cpu_.d);
-        s.io(cpu_.dbr); s.io(cpu_.pbr); s.io(cpu_.pc); s.io(cpu_.p);
-        s.io(cpu_.e); s.io(cpu_.cyc); s.io(cpu_.waiting); s.io(cpu_.stopped);
-        s.io(wram_); s.io(sram_); s.io(dma_);
-        s.io(nmitimen_); s.io(rdnmi_); s.io(in_vblank_); s.io(joy1_);
-        s.io(hdmaen_); s.io(hdma_term_); s.io(hdma_do_);
-        s.io(buttons_); s.io(line_);
-        s.io(ipl_transfer_); s.io(ipl_addr_); s.io(ipl_last_index_);
-        s.io(ipl_ports_); s.io(sample_acc_);
-        ppu_.serialize(s);
-        spc_.serialize(s);
-        dsp_.serialize(s);
-    }
+    void serialize_all(S& s);
 };
 
 }  // namespace famemu::snes
+
+#include "snes_system_impl.hpp"

@@ -36,6 +36,16 @@ Before reproducing, grep this list for the shape of your bug.
 - **A "scoped to game X" emulator rots as game X grows** — re-diff against
   a reference emulator through scripted GAMEPLAY (movement, state changes),
   not just the boot/title frame; align game time (boot pad), not host time.
+- **Lockstep diff SHAPE identifies the subsystem before any code-reading** —
+  sprite-band-only = OBJ evaluator; outline-of-everything = 1px shift (find
+  axis with an np.roll sweep); ±1-unit channel dots = one color-math term;
+  solid frame = one side never booted (header/mapping detection).
+- **Undocumented hardware behavior: probe ROM beats documentation** — build
+  a minimal .sfc that makes each candidate behavior visually distinct and
+  let the reference emulator adjudicate (see tests/features/sprlimit.s).
+- **CPU timing models: per-access bus costs ARE the cycle count** — adding
+  blanket per-op overhead double-charges and shows up as dropped game
+  frames (input/scroll lag vs reference), not as rendering errors.
 
 ---
 
@@ -44,17 +54,54 @@ Before reproducing, grep this list for the shape of your bug.
 Add entries here for any reusable harness you build in `scripts/`. Format:
 script name → one-line "what bug it was built to catch".
 
-<!-- Examples:
-- `scripts/render_dashboard.py` — drives the real `main.dashboard` view
-  via `test_request_context + login_user`. Catches route-level NameError
-  /BuildError that `render_template()` alone misses.
--->
+- `engines/snes/tests/verify_features.sh` — lockstep-diffs 29 frames against
+  snes9x across windows/mosaic/all BG modes/OPT/HiROM/mul-div-IRQ/SA-1/
+  SuperFX/OBJ limits. Catches any divergence a scoped golden CRC would bake
+  in as "correct". Skips cleanly without the parent snes9x checkout.
+- `engines/snes/tests/features/build.sh` — rebuilds all feature/coprocessor
+  test ROMs (ca65) and patches real header checksums at an EXPLICIT offset
+  (guessing the offset from the image mis-detects the mapping).
 
 ---
 
 ## Chronological log
 
 Newest first. Five lines max per entry. File:line citations beat prose.
+
+### 2026-07-14 · Blanket per-opcode "decode cycle" made the 65816 ~20% slow; game dropped frames
+Symptom: KORA play_clouds lockstep 16% off; boy 2px short (pyw 1024 vs 1026) — outdoor only.
+Cause: cpu65816.cpp charged +6 master cycles per opcode ON TOP of per-access costs; real memory ops have no extra internal cycle, so streaming-heavy frames overran and the game dropped 2 frames (indoor, no streaming, matched — the tell).
+Fix: charge the internal cycle only when an instruction did no bus work beyond its fetch (cpu65816.cpp, end of step()).
+**Lesson:** in a bus-cost timing model the per-access costs ARE the cycle count; blanket per-op overhead double-charges. A too-slow CPU shows up as game frame drops, not rendering bugs.
+
+### 2026-07-14 · OBJ time-over drops the LOWEST OAM indices (settled empirically)
+Symptom: featppu sprite band ~2% off vs snes9x in every case; famemu kept sprites 0-8, snes9x kept 11-19.
+Cause: the 34-sliver budget was spent in range order; hardware/snes9x fetch tiles from the LAST in-range sprite backward, so time-over hides the highest-priority sprites.
+Fix: sppu.cpp evaluate_objects draws the range list in reverse with overwrite fill (low index still wins overlaps); tests/features/sprlimit.s is the probe.
+**Lesson:** when two emulators disagree on undocumented behavior, don't re-read docs — build a minimal probe ROM and let the reference emulator adjudicate in one run.
+
+### 2026-07-14 · Half-subtract color math: snes9x drops the subtrahend's low bit
+Symptom: featppu case 9 (subtract+half) had ±1-unit channel diffs on ~5% of pixels; add+half and subtract-no-half were exact.
+Cause: famemu computed (m−s)>>1; snes9x computes (m−(s&~1))>>1 per channel (its guard-bit packed math).
+Fix: sppu.cpp render_line masks the operand's low bit before a halved subtract.
+**Lesson:** bisect color-math mismatches by toggling one CGADSUB/CGWSEL bit per variant ROM — three lockstep runs isolated the exact term.
+
+### 2026-07-14 · Offset-per-tile column decision must include the BG's own fine scroll
+Symptom: featppu case 6 (mode 2 OPT) 1.1% scattered column-edge diffs vs snes9x.
+Cause: OPT applied for x>=8 in screen space; hardware shifts the tile-column boundary by the BG's own hofs&7.
+Fix: sppu.cpp fetch_bg_pixel uses optcx = x + (hofs&7); entry column = (optcx&~7)−8 + (bg3hofs&~7).
+**Lesson:** every "per-tile" PPU feature keys off post-fine-scroll tile boundaries, not screen-pixel columns.
+
+### 2026-07-14 · Checksum patched at the wrong header offset flipped an SA-1 cart to HiROM
+Symptom: sa1.sfc booted into $A5 filler at 00:A5A5 in famemu (snes9x ran it); S-CPU stuck in its wait loop → black screen, 100% lockstep diff.
+Cause: the ROM build script picked the checksum slot by reading $FFD5 — $A5 filler on a LoROM image — and patched a valid pair into the bogus HiROM slot, so score-based mapping detection chose HiROM and skipped SA-1 instantiation.
+Fix: tests/features/build.sh takes the header offset per ROM explicitly.
+**Lesson:** with score-based header detection, a "valid" checksum in the WRONG slot flips the mapping; tools that patch headers must be told the layout, never guess it from the image.
+
+### 2026-07-14 · Lockstep diff triage cheat-sheet (from the SNES generalization pass)
+Diff confined to sprite rows = OBJ evaluator; outline-of-everything = 1px shift (np.roll sweep finds axis/magnitude); ±1-unit single-channel dots = one color-math term; whole-frame solid = one side never booted (mapping/detection).
+Gates: engines/snes/tests/verify_features.sh (29 lockstep frames: windows/mosaic/modes/OPT/HiROM/mul-div-IRQ/SA-1/SuperFX/OBJ limits) + kora/snes/verify_famemu.sh.
+**Lesson:** classify the diff SHAPE before touching code — each shape maps to one subsystem.
 
 ### 2026-07-14 · HDMA scanline mapping: match snes9x's row = table-line y+1
 Symptom: hdma.sfc wave/gradient off by one line vs snes9x (odd rows shifted 1px).

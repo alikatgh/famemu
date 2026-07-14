@@ -15,7 +15,7 @@ void Cpu65816::reset() {
     a = x = y = 0;
     waiting = stopped = false;
     pc = static_cast<uint16_t>(bus_.read(0xFFFC) | (bus_.read(0xFFFD) << 8));
-    cyc = 8;
+    cyc = 48;
 }
 
 void Cpu65816::interrupt(uint16_t native_vec, uint16_t emu_vec) {
@@ -28,7 +28,7 @@ void Cpu65816::interrupt(uint16_t native_vec, uint16_t emu_vec) {
     pbr = 0;
     const uint16_t vec = e ? emu_vec : native_vec;
     pc = static_cast<uint16_t>(rd(vec) | (rd(vec + 1) << 8));
-    cyc += 2;
+    cyc += 12;
 }
 
 void Cpu65816::nmi() { interrupt(0xFFEA, 0xFFFA); }
@@ -115,14 +115,14 @@ void Cpu65816::cmp_gen(uint16_t reg, uint16_t v, bool is8) {
 void Cpu65816::branch(bool cond) {
     int8_t off = static_cast<int8_t>(fetch());
     if (!cond) return;
-    ++cyc;
+    cyc += 6;
     pc = static_cast<uint16_t>(pc + off);
 }
 
 void Cpu65816::step() {
-    if (stopped || waiting) { cyc += 2; return; }
+    if (stopped || waiting) { cyc += 6; return; }
     const uint8_t op = fetch();
-    ++cyc;  // baseline internal cycle (coarse model; see header)
+    const uint64_t cyc_at_decode = cyc;
 
     // ---- generic op helpers bound to this instruction ----
     auto A8 = [&]() -> uint8_t { return static_cast<uint8_t>(a); };
@@ -147,7 +147,7 @@ void Cpu65816::step() {
     auto rmw = [&](uint32_t ea, auto fn) {
         if (m8()) { uint8_t v = rd(ea); v = static_cast<uint8_t>(fn(v, true)); wr(ea, v); }
         else { uint16_t v = rd16(ea); v = fn(v, false); wr16(ea, v); }
-        ++cyc;
+        cyc += 6;
     };
     auto op_asl = [&](uint16_t v, bool is8) -> uint16_t {
         setFlag(C, v & (is8 ? 0x80 : 0x8000));
@@ -519,7 +519,7 @@ void Cpu65816::step() {
                 if (up) { ++x; ++y; } else { --x; --y; }
                 if (x8()) { x &= 0xFF; y &= 0xFF; }
                 --a;
-                cyc += 5;
+                cyc += 30;
             } while (a != 0xFFFF);
             break;
         }
@@ -537,6 +537,9 @@ void Cpu65816::step() {
             // decode gap — treat as NOP but this should not happen.
             break;
     }
+    // Implied/register ops did no bus work beyond the fetch: charge their one
+    // internal cycle. Memory ops are already paid for per access.
+    if (cyc == cyc_at_decode) cyc += 6;
 }
 
 }  // namespace famemu::snes

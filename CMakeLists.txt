@@ -102,6 +102,13 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/engines/snes/tests/data/smoke.sfc")
     add_test(NAME snes_state_roundtrip COMMAND snes_state_test
         "${CMAKE_SOURCE_DIR}/engines/snes/tests/data/smoke.sfc")
 endif()
+# snes9x lockstep gate for the general-purpose features (windows, mosaic,
+# all BG modes, OPT, HiROM, mul/div/IRQ, SA-1, SuperFX, OBJ limits). The
+# script self-skips when the parent project's snes9x core is absent.
+if(EXISTS "${CMAKE_SOURCE_DIR}/../third_party/snes9x/libretro/snes9x_libretro.dylib")
+    add_test(NAME snes_features_lockstep
+        COMMAND "${CMAKE_SOURCE_DIR}/engines/snes/tests/verify_features.sh")
+endif()
 
 add_executable(nestest_harness engines/nes/tests/nestest_main.cpp)
 target_link_libraries(nestest_harness PRIVATE famemu_nes)

@@ -11,6 +11,8 @@ namespace famemu::snes {
 struct Bus16 {
     virtual uint8_t read(uint32_t addr24) = 0;          // full 24-bit bus
     virtual void write(uint32_t addr24, uint8_t v) = 0;
+    // Master-cycle cost of one access to addr24 (6 fast / 8 slow / 12 joypad).
+    virtual int speed(uint32_t /*addr24*/) const { return 6; }
     virtual ~Bus16() = default;
 };
 
@@ -45,8 +47,16 @@ private:
     bool x8() const { return e || (p & X); }   // index regs are 8-bit
 
     // -- bus helpers -----------------------------------------------------
-    uint8_t rd(uint32_t a24) { ++cyc; return bus_.read(a24 & 0xFFFFFF); }
-    void wr(uint32_t a24, uint8_t v) { ++cyc; bus_.write(a24 & 0xFFFFFF, v); }
+    uint8_t rd(uint32_t a24) {
+        a24 &= 0xFFFFFF;
+        cyc += bus_.speed(a24);
+        return bus_.read(a24);
+    }
+    void wr(uint32_t a24, uint8_t v) {
+        a24 &= 0xFFFFFF;
+        cyc += bus_.speed(a24);
+        bus_.write(a24, v);
+    }
     uint16_t rd16(uint32_t a24) {
         return static_cast<uint16_t>(rd(a24) | (rd(a24 + 1) << 8));
     }

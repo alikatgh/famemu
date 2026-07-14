@@ -1,9 +1,9 @@
 // famemu SNES engine — SPC700 audio CPU (+ timers, DSP register bridge).
 //
-// Scoped clean-room implementation: the opcode set covers what KORA's
-// generated driver (kora/snes/make_spc.py) executes, plus a loud stderr log
-// on any unimplemented opcode so driver growth is caught immediately instead
-// of silently misplaying. Timing: ~1.024 MHz, timers 0/1 at 8 kHz stages.
+// Clean-room implementation of the full 256-opcode instruction set with
+// per-instruction cycle counts, so commercial sound drivers run, not just
+// KORA's generated one. Timing: ~1.024 MHz; timers 0/1 at 8 kHz stages,
+// timer 2 at 64 kHz.
 #pragma once
 
 #include <cstdint>
@@ -45,12 +45,11 @@ public:
     void start_at(uint16_t entry) { pc = entry; running = true; }
     bool is_running() const { return running; }
 
-    // Run n SPC cycles (approximate: 2 cycles/op average is fine for this
-    // driver; the sequencer is timer-paced, not cycle-paced).
+    // Run n SPC cycles (per-instruction cycle counts via step()'s return).
     void run(int cycles) {
         if (!running) return;
         tick_timers(cycles);
-        for (int budget = cycles; budget > 0; budget -= 2) step();
+        for (int budget = cycles; budget > 0;) budget -= step();
     }
 
     // registers (public for save states)
@@ -64,11 +63,12 @@ public:
         s.io(a); s.io(x); s.io(y); s.io(psw); s.io(sp); s.io(pc); s.io(running);
         s.io(ports_in); s.io(ports_out);
         s.io(timer_target); s.io(timer_counter); s.io(timer_stage);
-        s.io(timer_enable); s.io(dsp_addr); s.io(stage_acc);
+        s.io(timer_enable); s.io(dsp_addr); s.io(stage_acc); s.io(stage16);
     }
 
 private:
-    static constexpr uint8_t C = 0x01, Z = 0x02, N = 0x80;
+    static constexpr uint8_t C = 0x01, Z = 0x02, I = 0x04, H = 0x08,
+                             B = 0x10, P = 0x20, V = 0x40, N = 0x80;
 
     SDsp* dsp_ = nullptr;
     uint8_t ports_in[4], ports_out[4];    // in: main->spc, out: spc->main
@@ -76,22 +76,27 @@ private:
     uint8_t timer_enable;
     uint8_t dsp_addr;
     int stage_acc;
+    uint8_t stage16 = 0;
 
     void tick_timers(int cycles) {
-        // Timers 0/1: 8 kHz stage clock = every 128 cycles (timer 2: 64 kHz,
-        // unused by the driver).
+        // Base stage clock is 16 cycles (timer 2, 64 kHz); timers 0/1 tick
+        // every 8th stage (128 cycles, 8 kHz).
         stage_acc += cycles;
-        while (stage_acc >= 128) {
-            stage_acc -= 128;
-            for (int t = 0; t < 2; ++t) {
-                if (!(timer_enable & (1 << t))) continue;
-                if (++timer_stage[t] >= (timer_target[t] ? timer_target[t] : 0)) {
-                    if (timer_target[t]) {
-                        timer_stage[t] = 0;
-                        timer_counter[t] = (timer_counter[t] + 1) & 0x0F;
-                    }
-                }
+        while (stage_acc >= 16) {
+            stage_acc -= 16;
+            tick_one(2);
+            if (++stage16 == 8) {
+                stage16 = 0;
+                tick_one(0);
+                tick_one(1);
             }
+        }
+    }
+    void tick_one(int t) {
+        if (!(timer_enable & (1 << t)) || !timer_target[t]) return;
+        if (++timer_stage[t] >= timer_target[t]) {
+            timer_stage[t] = 0;
+            timer_counter[t] = (timer_counter[t] + 1) & 0x0F;
         }
     }
 
@@ -108,8 +113,17 @@ private:
     }
     uint8_t fetch() { return rd(pc++); }
     void setZN(uint8_t v) { psw = (psw & ~(Z | N)) | (v ? 0 : Z) | (v & 0x80); }
+    void setZN16(uint16_t v) {
+        psw = static_cast<uint8_t>((psw & ~(Z | N)) | (v ? 0 : Z) | ((v >> 8) & 0x80));
+    }
+    void setFlag(uint8_t f, bool on) { psw = on ? (psw | f) : (psw & ~f); }
+    uint16_t dp(uint8_t a) const {
+        return static_cast<uint16_t>(((psw & P) ? 0x100 : 0) | a);
+    }
+    void push(uint8_t v) { aram[0x100 | sp--] = v; }
+    uint8_t pull() { return aram[0x100 | ++sp]; }
 
-    void step();
+    int step();  // returns cycles consumed
 };
 
 }  // namespace famemu::snes
