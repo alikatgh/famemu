@@ -2,6 +2,13 @@
 
 _Decision record. 2026-07-13. Extends [DISTRIBUTION.md](DISTRIBUTION.md)._
 
+> **2026-07-14 update — the engines have names and docs.** The two cores are
+> now branded **Ember 8** and **Ember 16** (historical console names are
+> internal/heritage-only from here on — App Store + trademark posture), both
+> are feature-complete and gated, and the developer-facing documentation
+> lives in [docs/engines/](engines/README.md): specs, C ABI, developer
+> guide, store content policy, and the clean-room/heritage statement.
+
 ## The vision
 
 **famemu is an open-source retro platform, funded by content.**
