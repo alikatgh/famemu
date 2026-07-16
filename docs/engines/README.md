@@ -39,6 +39,8 @@ scheduled to migrate to `ember8`/`ember16` at the next ABI-breaking change.
 |-----|----------------|
 | [EMBER8.md](EMBER8.md) | Ember 8 specification: CPU, video, audio, cartridge format, limits |
 | [EMBER16.md](EMBER16.md) | Ember 16 specification: full feature matrix including expansion chips |
+| [EMBER32.md](EMBER32.md) | Ember 32 specification (design-frozen, unbuilt): 2D-first 32-bit console |
+| [EMBER32_SCOPE.md](EMBER32_SCOPE.md) | Ember 32 scoping — the direction decision, recommendation, build plan |
 | [API.md](API.md) | The C ABI every engine implements (`famemu_core.h`) |
 | [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) | Toolchain, building a cartridge, testing, debugging |
 | [STORE_POLICY.md](STORE_POLICY.md) | What the store accepts; content and legal requirements |
