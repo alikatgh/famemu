@@ -24,6 +24,7 @@ executable.
 | **Per-scanline raster tables (HDMA-class)** (`compositor.hpp` `line_sx/sy`) | **done** — per-output-line layer offsets; a water-reflection ripple demo (`tools/raster_bringup.cpp`) |
 | **Thumb (16-bit) instruction set** (`cpu_arm7.hpp`) | **done + verified** — the common formats + ARM↔Thumb interworking (BX toggles the T bit); `tools/thumb_test.cpp` runs a Thumb program and checks the result |
 | **Feature/verification gate** (`tools/test_features.cpp`) | **done** — 9 cases (affine, alpha/additive blend, priority, quad, line-scroll, ARM + Thumb CPU) hashed against frozen goldens; `--bless` reblesses. CI-ready; the fast core verifies against this |
+| **C ABI facade** (`famemu_ember32_core.cpp`) | **done + verified** — implements `FamemuCoreAPI` (load_rom / run_frame / video_rgb / audio / set_input / save-state); a ROM loads, runs a frame, and returns video through the same interface as Ember 8/16 (`tools/facade_test.cpp`). App-side core registration is the remaining integration (touches the WIP app files) |
 | Banked FIQ/IRQ modes + exceptions + exact bus timing | **TODO** |
 | A separate optimised fast core (verified vs this reference) | **TODO** (phase 4) |
 

@@ -67,6 +67,7 @@ typedef struct FamemuCoreAPI {
  * the nes/snes names remain as ABI-stable aliases returning the same vtable. */
 const FamemuCoreAPI* famemu_ember8_core(void);   /* 8-bit  (aka famemu_nes_core)  */
 const FamemuCoreAPI* famemu_ember16_core(void);  /* 16-bit (aka famemu_snes_core) */
+const FamemuCoreAPI* famemu_ember32_core(void);  /* 32-bit (original 2D-first console) */
 const FamemuCoreAPI* famemu_nes_core(void);
 const FamemuCoreAPI* famemu_snes_core(void);
 

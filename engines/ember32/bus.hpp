@@ -33,6 +33,7 @@ struct Bus {
     Compositor gpu;
     bool rendered = false;
     uint32_t frame = 0;
+    uint32_t input = 0;                                  // pad buttons (read at MMIO+0x18)
 
     Bus() { ram = new uint8_t[RAM_SIZE]; std::memset(ram, 0, RAM_SIZE); }
     ~Bus() { delete[] ram; }
@@ -43,6 +44,7 @@ struct Bus {
     uint32_t r32(uint32_t a) const {
         if (a + 3 < RAM_SIZE) return ram[a] | ram[a+1]<<8 | ram[a+2]<<16 | uint32_t(ram[a+3])<<24;
         if (a - MMIO == 0x14) return frame;              // FRAME counter
+        if (a - MMIO == 0x18) return input;              // pad buttons
         return 0;
     }
     void w8(uint32_t a, uint8_t v)  { if (a < RAM_SIZE) ram[a] = v; else mmio(a, v); }
