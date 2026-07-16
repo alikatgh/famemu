@@ -1,12 +1,15 @@
-# Ember 32 — reference model (phase 2, in progress)
+# Ember 32 — reference model + fast core
 
-The portable C++ **reference model** for the Ember 32 console — the authority the
-fast core is later verified pixel-for-pixel against. Spec:
-[../../docs/engines/EMBER32.md](../../docs/engines/EMBER32.md). Plan / phases:
-[EMBER32_SCOPE.md §6](../../docs/engines/EMBER32_SCOPE.md).
+The portable C++ **reference model** for the Ember 32 console (the executable
+spec, correctness over speed) **and** the optimised **fast core** that is verified
+pixel-for-pixel identical to it. Compositor, ARM7 + Thumb CPU with the privileged
+machine (banked modes, exceptions, IRQ/FIQ, exact timing), the bus + MMIO, audio
+(voices + ADPCM + echo + streaming), the RF path, and the C ABI facade are all
+done and gated. Spec: [../../docs/engines/EMBER32.md](../../docs/engines/EMBER32.md).
+Plan / phases: [EMBER32_SCOPE.md §6](../../docs/engines/EMBER32_SCOPE.md).
 
-Correctness over speed is the rule here — this file set *is* the spec, made
-executable.
+Run every gate with `./run_tests.sh` (see below); the reference stays the authority
+the fast core is checked against.
 
 ## Status
 
@@ -28,7 +31,7 @@ executable.
 | **C ABI facade** (`famemu_ember32_core.cpp`) | **done + verified** — implements `FamemuCoreAPI` (load_rom / run_frame / video_rgb / audio / set_input / save-state); a ROM loads, runs a frame, and returns video through the same interface as Ember 8/16 (`tools/facade_test.cpp`) |
 | **`.e32` cartridge file + app registration** (`tools/make_cart.cpp`, `tools/cart_file_test.cpp`) | **done + verified** — `make_cart` emits a flat `.e32` ROM image (program at 0, cart data at 0x1000+); `cart_file_test` loads it from disk through the facade exactly as the app does (fread → `load_rom` → `run_frame` → `video_rgb`) and confirms real content (320×240, scaled layer + bright sprite). The famemu app registers `builtin:ember32` (raw 24-bit RGB, Library “Ember 32” category) |
 | **Banked modes + exceptions + exact bus timing** (`cpu_arm7.hpp`, `bus.hpp`) | **done + verified** — the 7 processor modes with banked r13/r14 (+ r8-r12 for FIQ) and per-mode SPSR; the exception entry/return sequence for Reset/Undef/SWI/PAbort/DAbort/IRQ/FIQ (vectors 0x00-0x1C); SWI (ARM + Thumb); an IRQ/FIQ controller on the bus (IRQ_ENABLE/FLAGS/FIQ_ENABLE, VBLANK source) driving the CPU lines; and an S/N/I bus-cycle counter (`tcycles`). `tools/exception_test.cpp` proves banked SPs, SPSR, FIQ-banked r8 isolation, live IRQ+FIQ delivery, and hand-counted timing (12/12) |
-| A separate optimised fast core (verified vs this reference) | **TODO** (phase 4) |
+| **Optimised fast core** (`compositor_fast.hpp`) | **done + verified** — `render_fast()`, a drop-in that renders the same `Compositor` fields **pixel-for-pixel identical** to the reference (bit-identical arithmetic: a separable pure-integer inner loop for un-rotated layers, hoisted row-constant affine terms otherwise, inlined sampler/blend). `tools/fastcore_test.cpp` proves 7/7 scenes match the frozen goldens through both cores; ~1.5x aggregate / ~2x on the common full-screen-layer case |
 
 ## Run the bring-up
 
@@ -75,6 +78,18 @@ c++ -std=c++17 -O2 -I.. tools/audio_dsp_test.cpp -o /tmp/e32ad && /tmp/e32ad
 
 Checks IMA ADPCM decode (exact samples + a sine round-trip), the echo bus impulse
 response, and sample-accurate streamed playback (8/8).
+
+## Run every gate (what CI runs)
+
+```sh
+cd engines/ember32 && ./run_tests.sh
+```
+
+Compiles and runs all gates — the golden feature suite, the **fast-core pixel-
+identity** check, exceptions/timing, the audio DSP, Thumb, the C ABI facade, and a
+real `.e32` load. Exits non-zero on the first failure; wired into the engine repo's
+CI. The fast core (`compositor_fast.hpp`) is proven identical to the reference and
+is ~1.5–2× faster.
 
 ## Architecture
 

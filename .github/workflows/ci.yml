@@ -36,3 +36,6 @@ jobs:
 
       - name: Golden screens (verified feature ROMs; game ROMs skipped)
         run: ./build/snes_golden_test engines/snes/tests/data/golden_screens.txt
+
+      - name: Ember 32 gates (reference goldens + fast-core pixel-identity)
+        run: ( cd engines/ember32 && ./run_tests.sh )
