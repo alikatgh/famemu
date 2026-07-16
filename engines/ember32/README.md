@@ -24,7 +24,8 @@ executable.
 | **Per-scanline raster tables (HDMA-class)** (`compositor.hpp` `line_sx/sy`) | **done** — per-output-line layer offsets; a water-reflection ripple demo (`tools/raster_bringup.cpp`) |
 | **Thumb (16-bit) instruction set** (`cpu_arm7.hpp`) | **done + verified** — the common formats + ARM↔Thumb interworking (BX toggles the T bit); `tools/thumb_test.cpp` runs a Thumb program and checks the result |
 | **Feature/verification gate** (`tools/test_features.cpp`) | **done** — 9 cases (affine, alpha/additive blend, priority, quad, line-scroll, ARM + Thumb CPU) hashed against frozen goldens; `--bless` reblesses. CI-ready; the fast core verifies against this |
-| **C ABI facade** (`famemu_ember32_core.cpp`) | **done + verified** — implements `FamemuCoreAPI` (load_rom / run_frame / video_rgb / audio / set_input / save-state); a ROM loads, runs a frame, and returns video through the same interface as Ember 8/16 (`tools/facade_test.cpp`). App-side core registration is the remaining integration (touches the WIP app files) |
+| **C ABI facade** (`famemu_ember32_core.cpp`) | **done + verified** — implements `FamemuCoreAPI` (load_rom / run_frame / video_rgb / audio / set_input / save-state); a ROM loads, runs a frame, and returns video through the same interface as Ember 8/16 (`tools/facade_test.cpp`) |
+| **`.e32` cartridge file + app registration** (`tools/make_cart.cpp`, `tools/cart_file_test.cpp`) | **done + verified** — `make_cart` emits a flat `.e32` ROM image (program at 0, cart data at 0x1000+); `cart_file_test` loads it from disk through the facade exactly as the app does (fread → `load_rom` → `run_frame` → `video_rgb`) and confirms real content (320×240, scaled layer + bright sprite). The famemu app registers `builtin:ember32` (raw 24-bit RGB, Library “Ember 32” category) |
 | Banked FIQ/IRQ modes + exceptions + exact bus timing | **TODO** |
 | A separate optimised fast core (verified vs this reference) | **TODO** (phase 4) |
 
@@ -39,6 +40,20 @@ It writes a 320×240 PPM. The frame exercises: two independently rotated/scaled
 background layers (one **additive**), six sprites at varied scale / rotation /
 alpha / blend, and priority interleaving (the big centre orb draws *behind* the
 glow-grid while the small orbs draw *in front*).
+
+## Build a real cartridge file and load it (the app path)
+
+```sh
+cd engines/ember32
+# 1. emit a flat .e32 ROM image (ARM program at 0, cart data at 0x1000+)
+c++ -std=c++17 -O2 tools/make_cart.cpp -o /tmp/e32mk && /tmp/e32mk /tmp/demo.e32
+# 2. load it from disk through the FamemuCoreAPI facade, exactly as the app does
+c++ -std=c++17 -O2 -I.. tools/cart_file_test.cpp famemu_ember32_core.cpp -o /tmp/e32cf && /tmp/e32cf /tmp/demo.e32
+```
+
+The same `.e32` runs in the famemu app as `builtin:ember32` (raw 24-bit RGB,
+320×240; Library → **Ember 32**). `cart_file_test` asserts the frame is real
+content (scaled layer + bright sprite), not a flat backdrop.
 
 ## Architecture
 
