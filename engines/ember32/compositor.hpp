@@ -42,6 +42,11 @@ struct Layer {
     BlendMode blend = BLEND_NONE;
     uint8_t alpha = 255;
     bool wrap = true;               // wrap the tilemap (else clip to its bounds)
+    // Optional per-OUTPUT-scanline source offsets — the HDMA-class raster trick.
+    // One entry per screen line (H of them). Bends the layer per line for water
+    // ripple, parallax bands, wobble, perspective floors, etc.
+    const int16_t* line_sx = nullptr;
+    const int16_t* line_sy = nullptr;
 };
 
 struct Sprite {
@@ -139,6 +144,8 @@ private:
         float dx = x - W * 0.5f, dy = y - H * 0.5f;
         float fx = L.a * dx + L.b * dy + L.ox;
         float fy = L.c * dx + L.d * dy + L.oy;
+        if (L.line_sx) fx += L.line_sx[y];      // per-scanline raster offsets (HDMA-class)
+        if (L.line_sy) fy += L.line_sy[y];
         int px = (int)std::floor(fx), py = (int)std::floor(fy);
         int tw = L.map_w * 8, th = L.map_h * 8;
         if (L.wrap) { px = ((px % tw) + tw) % tw; py = ((py % th) + th) % th; }

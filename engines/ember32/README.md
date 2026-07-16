@@ -21,8 +21,8 @@ executable.
 | **Audio: 32 voices + ADSR + pan** (`audio.hpp`) | **done** — pitched PCM voices, ADSR envelopes, stereo pan → 48 kHz mix; verified as a chord WAV (`tools/audio_bringup.cpp`). ADPCM / reverb / streamed channels = follow-ons |
 | **Phase 3 — bring-up cartridge** (`tools/cart_bringup.cpp`) | **done** — an ARM program configures a scrolling scaled layer + a scaled/rotated sprite via MMIO, renders, end to end |
 | **Phase 3 — out the RF path** (`rf_composite.hpp`) | **done** — the frame goes through an NTSC composite encode/decode (the platform signature); the cart writes clean + composite frames |
+| **Per-scanline raster tables (HDMA-class)** (`compositor.hpp` `line_sx/sy`) | **done** — per-output-line layer offsets; a water-reflection ripple demo (`tools/raster_bringup.cpp`) |
 | Thumb / banked modes / exact bus timing | **TODO** (the CPU runs real ARM programs; these harden it) |
-| Per-scanline register tables (HDMA-class) | **TODO** |
 | Feature test carts + fast-core lockstep gates | **TODO** (phase 4) |
 
 ## Run the bring-up
