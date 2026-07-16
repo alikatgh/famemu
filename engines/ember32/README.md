@@ -22,7 +22,8 @@ executable.
 | **Phase 3 — bring-up cartridge** (`tools/cart_bringup.cpp`) | **done** — an ARM program configures a scrolling scaled layer + a scaled/rotated sprite via MMIO, renders, end to end |
 | **Phase 3 — out the RF path** (`rf_composite.hpp`) | **done** — the frame goes through an NTSC composite encode/decode (the platform signature); the cart writes clean + composite frames |
 | **Per-scanline raster tables (HDMA-class)** (`compositor.hpp` `line_sx/sy`) | **done** — per-output-line layer offsets; a water-reflection ripple demo (`tools/raster_bringup.cpp`) |
-| Thumb / banked modes / exact bus timing | **TODO** (the CPU runs real ARM programs; these harden it) |
+| **Thumb (16-bit) instruction set** (`cpu_arm7.hpp`) | **done + verified** — the common formats + ARM↔Thumb interworking (BX toggles the T bit); `tools/thumb_test.cpp` runs a Thumb program and checks the result |
+| Banked FIQ/IRQ modes + exceptions + exact bus timing | **TODO** |
 | Feature test carts + fast-core lockstep gates | **TODO** (phase 4) |
 
 ## Run the bring-up

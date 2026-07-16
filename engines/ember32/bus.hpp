@@ -39,12 +39,14 @@ struct Bus {
     Bus(const Bus&) = delete; Bus& operator=(const Bus&) = delete;
 
     uint8_t  r8(uint32_t a)  const { return a < RAM_SIZE ? ram[a] : 0; }
+    uint16_t r16(uint32_t a) const { return a + 1 < RAM_SIZE ? uint16_t(ram[a] | ram[a+1] << 8) : 0; }
     uint32_t r32(uint32_t a) const {
         if (a + 3 < RAM_SIZE) return ram[a] | ram[a+1]<<8 | ram[a+2]<<16 | uint32_t(ram[a+3])<<24;
         if (a - MMIO == 0x14) return frame;              // FRAME counter
         return 0;
     }
     void w8(uint32_t a, uint8_t v)  { if (a < RAM_SIZE) ram[a] = v; else mmio(a, v); }
+    void w16(uint32_t a, uint16_t v) { if (a + 1 < RAM_SIZE) { ram[a]=v; ram[a+1]=v>>8; } }
     void w32(uint32_t a, uint32_t v) {
         if (a + 3 < RAM_SIZE) { ram[a]=v; ram[a+1]=v>>8; ram[a+2]=v>>16; ram[a+3]=v>>24; }
         else mmio(a, v);

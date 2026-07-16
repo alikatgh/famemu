@@ -78,14 +78,17 @@ struct CPU {
     }
 
     void step() {
+        if (cpsr & 0x20) { thumb_step(); return; }  // CPSR.T set → Thumb state
         uint32_t pc = r[15];
         uint32_t insn = bus->r32(pc);
         r[15] = pc + 8;                      // ARM PC reads as insn+8
         cycles++;
         if (!cond(insn>>28)) { r[15] = pc + 4; return; }
 
-        if ((insn&0x0FFFFFF0)==0x012FFF10) {       // BX — used here as HALT if to r with bit0 quirk
-            r[15] = r[insn&0xF] & ~1u; return;
+        if ((insn&0x0FFFFFF0)==0x012FFF10) {       // BX — switches ARM/Thumb via bit0
+            uint32_t t = r[insn&0xF];
+            if (t & 1) cpsr |= 0x20; else cpsr &= ~0x20u;
+            r[15] = t & ~1u; return;
         }
         if ((insn&0x0F000000)==0x0A000000 || (insn&0x0F000000)==0x0B000000) { // B / BL
             int32_t off = int32_t(insn<<8)>>6;      // sign-extend 24-bit, <<2
@@ -137,7 +140,7 @@ struct CPU {
             case 0xE: res=a&~b; break;               case 0xF: res=~b; break;
         }
         if(wb) r[rd]=res;
-        if(S){ setNZ(res); if(opc>=0x2&&opc<=0x7||opc==0xA||opc==0xB){ setC(cf); setV(vf); } else setC(cf); }
+        if(S){ setNZ(res); if((opc>=0x2&&opc<=0x7)||opc==0xA||opc==0xB){ setC(cf); setV(vf); } else setC(cf); }
     }
 
     void load_store(uint32_t insn) {
@@ -164,6 +167,122 @@ struct CPU {
         }
         if(W) r[rn]=final;
         if(L && (list&(1<<15))) r[15]&=~3u;
+    }
+
+    // ---- Thumb (16-bit) state ----
+    void thumb_step() {
+        uint32_t pc = r[15];
+        uint16_t op = bus->r16(pc);
+        r[15] = pc + 2;                     // will be overridden by branches
+        uint32_t rpc = pc + 4;              // Thumb PC reads +4
+        cycles++;
+        uint32_t h = op >> 13;
+
+        if (h == 0) {
+            if ((op >> 11 & 3) == 3) {                      // fmt 2: ADD/SUB reg/imm3
+                uint32_t rd=op&7, rn=op>>3&7, arg=op>>6&7;
+                uint32_t a=r[rn], b=(op&0x400)?arg:r[arg], res;
+                if (op&0x200){ res=a-b; setNZ(res); setC(a>=b); setV(((a^b)&(a^res)&0x80000000)!=0); }
+                else         { res=a+b; setNZ(res); setC(((uint64_t)a+b)>>32); setV((~(a^b)&(a^res)&0x80000000)!=0); }
+                r[rd]=res; return;
+            }
+            uint32_t rd=op&7, rm=op>>3&7, amt=op>>6&0x1F, type=op>>11&3;  // fmt 1: shift by imm
+            bool cf; uint32_t res=shift(r[rm], type, (type!=0 && amt==0)?32:amt, cf);
+            r[rd]=res; setNZ(res); setC(cf); return;
+        }
+        if (h == 1) {                                        // fmt 3: MOV/CMP/ADD/SUB imm8
+            uint32_t rd=op>>8&7, imm=op&0xFF, o=op>>11&3, a=r[rd], res;
+            if (o==0){ r[rd]=imm; setNZ(imm); }
+            else if (o==2){ res=a+imm; r[rd]=res; setNZ(res); setC(((uint64_t)a+imm)>>32); setV((~(a^imm)&(a^res)&0x80000000)!=0); }
+            else { res=a-imm; if(o==3) r[rd]=res; setNZ(res); setC(a>=imm); setV(((a^imm)&(a^res)&0x80000000)!=0); }
+            return;
+        }
+        if (h == 2) {
+            if ((op>>10&0x3F)==0x10) {                       // fmt 4: ALU
+                uint32_t rd=op&7, rm=op>>3&7, o=op>>6&0xF, a=r[rd], b=r[rm], res=a; bool cf=C();
+                switch(o){
+                    case 0x0: res=a&b; setNZ(res); r[rd]=res; return;
+                    case 0x1: res=a^b; setNZ(res); r[rd]=res; return;
+                    case 0x2: res=shift(a,0,b&0xFF,cf); setNZ(res); setC(cf); r[rd]=res; return;
+                    case 0x3: res=shift(a,1,b&0xFF,cf); setNZ(res); setC(cf); r[rd]=res; return;
+                    case 0x4: res=shift(a,2,b&0xFF,cf); setNZ(res); setC(cf); r[rd]=res; return;
+                    case 0x5: { uint64_t s=(uint64_t)a+b+C(); res=s; setNZ(res); setC(s>>32); setV((~(a^b)&(a^res)&0x80000000)!=0); r[rd]=res; return; }
+                    case 0x6: { uint64_t s=(uint64_t)a+(~b&0xFFFFFFFFu)+C(); res=s; setNZ(res); setC(s>>32); setV(((a^b)&(a^res)&0x80000000)!=0); r[rd]=res; return; }
+                    case 0x7: res=shift(a,3,b&0xFF,cf); setNZ(res); setC(cf); r[rd]=res; return;
+                    case 0x8: setNZ(a&b); return;                                   // TST
+                    case 0x9: res=0-b; setNZ(res); setC(b==0); r[rd]=res; return;   // NEG
+                    case 0xA: res=a-b; setNZ(res); setC(a>=b); setV(((a^b)&(a^res)&0x80000000)!=0); return; // CMP
+                    case 0xB: { uint64_t s=(uint64_t)a+b; setNZ((uint32_t)s); setC(s>>32); return; }        // CMN
+                    case 0xC: res=a|b; setNZ(res); r[rd]=res; return;
+                    case 0xD: res=a*b; setNZ(res); r[rd]=res; return;
+                    case 0xE: res=a&~b; setNZ(res); r[rd]=res; return;
+                    case 0xF: res=~b; setNZ(res); r[rd]=res; return;
+                }
+            }
+            if ((op>>10&0x3F)==0x11) {                       // fmt 5: hi-reg ops + BX
+                uint32_t o=op>>8&3, rd=(op&7)|(op>>4&8), rm=op>>3&0xF, vm=r[rm];
+                if (rm==15) vm=rpc;
+                if (o==3){ if(vm&1) cpsr|=0x20; else cpsr&=~0x20u; r[15]=vm&~1u; return; }
+                if (o==0){ r[rd]=(rd==15?rpc:r[rd])+vm; if(rd==15) r[15]&=~1u; }
+                else if (o==1){ uint32_t a=(rd==15?rpc:r[rd]),res=a-vm; setNZ(res); setC(a>=vm); setV(((a^vm)&(a^res)&0x80000000)!=0); }
+                else { r[rd]=vm; if(rd==15) r[15]&=~1u; }
+                return;
+            }
+            if ((op>>11&0x1F)==9) {                          // fmt 6: LDR Rd,[PC,#imm]
+                r[op>>8&7]=bus->r32((rpc&~3u)+(op&0xFF)*4); return;
+            }
+            uint32_t rd=op&7, rn=op>>3&7, rm=op>>6&7, addr=r[rn]+r[rm];   // fmt 7/8: reg offset
+            if (op&0x200){ uint32_t o=op>>10&3;                          // SH ops
+                if(o==0) bus->w16(addr, r[rd]);
+                else if(o==1) r[rd]=uint32_t(int32_t(int8_t(bus->r8(addr))));
+                else if(o==2) r[rd]=bus->r16(addr);
+                else r[rd]=uint32_t(int32_t(int16_t(bus->r16(addr))));
+            } else { uint32_t o=op>>10&3;
+                if(o==0) bus->w32(addr,r[rd]); else if(o==1) bus->w8(addr,r[rd]);
+                else if(o==2) r[rd]=bus->r32(addr); else r[rd]=bus->r8(addr);
+            }
+            return;
+        }
+        if (h == 3) {                                        // fmt 9: load/store imm offset
+            uint32_t rd=op&7, rn=op>>3&7, off=op>>6&0x1F, addr;
+            bool B=op&0x1000, L=op&0x800;
+            addr = r[rn] + (B?off:off*4);
+            if(L) r[rd]=B?bus->r8(addr):bus->r32(addr);
+            else { if(B) bus->w8(addr,r[rd]); else bus->w32(addr,r[rd]); }
+            return;
+        }
+        if (h == 4) {
+            if(!(op&0x1000)){ uint32_t rd=op&7,rn=op>>3&7,addr=r[rn]+(op>>6&0x1F)*2;  // fmt 10: halfword
+                if(op&0x800) r[rd]=bus->r16(addr); else bus->w16(addr,r[rd]); return; }
+            uint32_t rd=op>>8&7, addr=r[13]+(op&0xFF)*4;      // fmt 11: SP-relative
+            if(op&0x800) r[rd]=bus->r32(addr); else bus->w32(addr,r[rd]); return;
+        }
+        if (h == 5) {
+            if(!(op&0x1000)){ r[op>>8&7]=(op&0x800)? r[13]+(op&0xFF)*4 : (rpc&~3u)+(op&0xFF)*4; return; } // fmt 12
+            if((op&0xFF00)==0xB000){ uint32_t o=(op&0x7F)*4; r[13]+=(op&0x80)? -int(o):int(o); return; }  // fmt 13
+            if((op&0xF600)==0xB400){                          // fmt 14: PUSH/POP
+                bool L=op&0x800, R=op&0x100; uint8_t list=op&0xFF;
+                if(!L){ int n=__builtin_popcount(list)+(R?1:0); uint32_t a=r[13]-n*4; r[13]=a;
+                        for(int i=0;i<8;i++) if(list>>i&1){ bus->w32(a,r[i]); a+=4; } if(R) bus->w32(a,r[14]); }
+                else { uint32_t a=r[13]; for(int i=0;i<8;i++) if(list>>i&1){ r[i]=bus->r32(a); a+=4; }
+                       if(R){ r[15]=bus->r32(a)&~1u; a+=4; } r[13]=a; }
+                return;
+            }
+            return;
+        }
+        if (h == 6) {
+            if(!(op&0x1000)){ uint32_t rn=op>>8&7,a=r[rn],list=op&0xFF;                // fmt 15: LDMIA/STMIA
+                for(int i=0;i<8;i++) if(list>>i&1){ if(op&0x800) r[i]=bus->r32(a); else bus->w32(a,r[i]); a+=4; }
+                r[rn]=a; return; }
+            uint32_t c=op>>8&0xF;                             // fmt 16: conditional branch / SWI
+            if(c==0xF) return;                                // SWI: ignored in the reference
+            if(cond(c)) r[15]=rpc + int32_t(int8_t(op&0xFF))*2;
+            return;
+        }
+        // h == 7
+        if((op>>11&0x1F)==0x1C){ r[15]=rpc + ((int32_t(op<<21)>>20)); return; }        // fmt 18: B
+        if((op>>11&0x1F)==0x1E){ r[14]=rpc + (int32_t(op<<21)>>9); return; }            // fmt 19: BL hi
+        if((op>>11&0x1F)==0x1F){ uint32_t ret=(pc+2)|1; r[15]=(r[14]+((op&0x7FF)<<1))&~1u; r[14]=ret; return; } // BL lo
     }
 
     void run(uint64_t max_steps) {
