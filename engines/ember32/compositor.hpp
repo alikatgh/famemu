@@ -55,6 +55,20 @@ struct Sprite {
     uint8_t alpha = 255;
 };
 
+// Optional textured/Gouraud QUAD — the "3-D as a distorted sprite" unit. Four
+// screen corners + four texture coords; the picture is affine-mapped across it
+// (not perspective-correct — the era's look). Reuses the paletted texture path.
+struct Quad {
+    bool enabled = false;
+    float x[4] = {}, y[4] = {};      // screen corners (0,1,2,3 around the perimeter)
+    float u[4] = {}, v[4] = {};      // matching texture coords, in texels
+    const uint8_t* tex = nullptr;    // tw*th 8bpp indices (0 = transparent)
+    int tw = 0, th = 0;
+    int priority = 0;
+    BlendMode blend = BLEND_NONE;
+    uint8_t alpha = 255;
+};
+
 struct Compositor {
     static const int W = 320, H = 240;
     RGB palette[256] = {};
@@ -62,6 +76,8 @@ struct Compositor {
     Layer layers[6] = {};
     Sprite sprites[1024] = {};
     int sprite_count = 0;
+    Quad quads[64] = {};
+    int quad_count = 0;
     RGB backdrop = {0, 0, 0};
     RGB fb[W * H] = {};
 
@@ -78,14 +94,16 @@ struct Compositor {
     void render() {
         for (int i = 0; i < W * H; i++) fb[i] = backdrop;
 
-        // Priority-ordered draw list (layers + sprites), back to front.
+        // Priority-ordered draw list (layers + sprites + quads), back to front.
         struct D { int prio, type, idx; };
-        D list[6 + 1024];
+        D list[6 + 1024 + 64];
         int n = 0;
         for (int i = 0; i < 6; i++)
             if (layers[i].enabled) list[n++] = {layers[i].priority, 0, i};
         for (int i = 0; i < sprite_count; i++)
             if (sprites[i].enabled) list[n++] = {sprites[i].priority, 1, i};
+        for (int i = 0; i < quad_count; i++)
+            if (quads[i].enabled) list[n++] = {quads[i].priority, 2, i};
         // stable insertion sort (small n; reference clarity over speed)
         for (int i = 1; i < n; i++) {
             D k = list[i]; int j = i - 1;
@@ -93,8 +111,9 @@ struct Compositor {
             list[j + 1] = k;
         }
         for (int i = 0; i < n; i++) {
-            if (list[i].type == 0) draw_layer(layers[list[i].idx]);
-            else                   draw_sprite(sprites[list[i].idx]);
+            if (list[i].type == 0)      draw_layer(layers[list[i].idx]);
+            else if (list[i].type == 1) draw_sprite(sprites[list[i].idx]);
+            else                        draw_quad(quads[list[i].idx]);
         }
     }
 
@@ -167,6 +186,36 @@ private:
                 blend_px(y * W + x, palette[ix], S.blend, S.alpha);
             }
     }
+
+    static float edge(float ax, float ay, float bx, float by, float px, float py) {
+        return (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+    }
+    // affine-textured triangle; barycentric weights are divided by the SIGNED
+    // area, so a point inside is w>=0 for either winding.
+    void draw_tri(const Quad& Q, int i0, int i1, int i2) {
+        float ax=Q.x[i0],ay=Q.y[i0], bx=Q.x[i1],by=Q.y[i1], cx=Q.x[i2],cy=Q.y[i2];
+        float area = edge(ax,ay,bx,by,cx,cy);
+        if (std::fabs(area) < 1e-6f) return;
+        int x0=std::max(0,(int)std::floor(std::min({ax,bx,cx})));
+        int x1=std::min(W-1,(int)std::ceil(std::max({ax,bx,cx})));
+        int y0=std::max(0,(int)std::floor(std::min({ay,by,cy})));
+        int y1=std::min(H-1,(int)std::ceil(std::max({ay,by,cy})));
+        for (int y=y0;y<=y1;y++)
+            for (int x=x0;x<=x1;x++) {
+                float px=x+0.5f, py=y+0.5f;
+                float w0=edge(bx,by,cx,cy,px,py)/area;
+                float w1=edge(cx,cy,ax,ay,px,py)/area;
+                float w2=edge(ax,ay,bx,by,px,py)/area;
+                if (w0<0||w1<0||w2<0) continue;
+                int tu=(int)(w0*Q.u[i0]+w1*Q.u[i1]+w2*Q.u[i2]);
+                int tv=(int)(w0*Q.v[i0]+w1*Q.v[i1]+w2*Q.v[i2]);
+                if (tu<0||tv<0||tu>=Q.tw||tv>=Q.th) continue;
+                uint8_t ix=Q.tex[tv*Q.tw+tu];
+                if (ix==0) continue;
+                blend_px(y*W+x, palette[ix], Q.blend, Q.alpha);
+            }
+    }
+    void draw_quad(const Quad& Q) { draw_tri(Q,0,1,2); draw_tri(Q,0,2,3); }
 };
 
 } // namespace ember32
