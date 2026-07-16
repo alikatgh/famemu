@@ -1,13 +1,23 @@
-// ember32/cpu_arm7.hpp — Ember 32 CPU: an ARM7TDMI-class ARM-state interpreter,
+// ember32/cpu_arm7.hpp — Ember 32 CPU: an ARM7TDMI-class ARM + Thumb interpreter,
 // REFERENCE MODEL (correctness over speed).
 //
-// Covers the ARM instruction classes a bring-up program needs and then some:
-// data-processing (all 16 opcodes, immediate / register / register-shifted
-// operands, the S-bit flag update and shifter carry), MUL/MLA, single load/store
-// (imm & register offset, pre/post index, writeback, byte/word), load/store
-// multiple (IA/IB/DA/DB + writeback), branch/branch-link, and MRS/MSR. Thumb,
-// banked FIQ/IRQ registers and exceptions are deferred (see README) — this is
-// the "does an ARM program drive the compositor?" core, not the full silicon.
+// Covers the ARM instruction classes: data-processing (all 16 opcodes, immediate
+// / register / register-shifted operands, the S-bit flag update and shifter
+// carry), MUL/MLA, single load/store (imm & register offset, pre/post index,
+// writeback, byte/word), load/store multiple (IA/IB/DA/DB + writeback + the `^`
+// exception-return form), branch/branch-link, MRS/MSR (CPSR *and* SPSR), SWI,
+// and the full Thumb ISA with ARM<->Thumb interworking.
+//
+// The privileged machine is modelled: the seven processor modes with their
+// BANKED r13/r14 (and r8-r12 for FIQ) and per-mode SPSR, plus the exception
+// entry/exit sequence for Reset / Undefined / SWI / Prefetch-Abort / Data-Abort
+// / IRQ / FIQ (vectors at 0x00..0x1C). IRQ/FIQ lines come from the bus interrupt
+// controller (bus.hpp). A separate S/N/I bus-cycle counter (`tcycles`) models
+// exact ARM7TDMI timing alongside the retired-instruction count (`cycles`).
+//
+// Return-from-exception is the architectural `MOVS/SUBS PC, LR, #off` (data-proc
+// to PC with S) and `LDM {..,pc}^`, both of which restore CPSR from the current
+// mode's SPSR. Interrupt handlers return with the customary `SUBS PC, LR, #4`.
 //
 // Memory goes through a Bus (bus.hpp): flat RAM + an MMIO window onto the GPU.
 #pragma once
@@ -16,12 +26,28 @@
 
 namespace ember32 {
 
+// Processor modes (CPSR[4:0]).
+enum : uint32_t { MODE_USR=0x10, MODE_FIQ=0x11, MODE_IRQ=0x12, MODE_SVC=0x13,
+                  MODE_ABT=0x17, MODE_UND=0x1B, MODE_SYS=0x1F };
+// Exception vector addresses.
+enum : uint32_t { VEC_RESET=0x00, VEC_UNDEF=0x04, VEC_SWI=0x08, VEC_PABT=0x0C,
+                  VEC_DABT=0x10, VEC_IRQ=0x18, VEC_FIQ=0x1C };
+
 struct CPU {
     uint32_t r[16] = {};      // r15 = PC (points at the instruction being fetched + 8, ARM)
-    uint32_t cpsr = 0x1F;     // System mode; flags in the top bits
+    uint32_t cpsr = 0x1F;     // System mode; NZCVQ flags high, I/F/T + mode bits low
     Bus* bus = nullptr;
     bool halted = false;
-    uint64_t cycles = 0;
+    uint64_t cycles = 0;      // retired instructions
+    uint64_t tcycles = 0;     // bus cycles (S+N+I) — exact ARM7TDMI timing
+
+    // Banked state. Bank index: 0=usr/sys, 1=fiq, 2=irq, 3=svc, 4=abt, 5=und.
+    // The ACTIVE mode's r13/r14 live in r[]; the banks hold the inactive copies.
+    uint32_t bank13[6] = {}, bank14[6] = {}, bankspsr[6] = {};
+    uint32_t usr_r8_12[5] = {};   // r8..r12 shared by every non-FIQ mode
+    uint32_t fiq_r8_12[5] = {};   // r8..r12 private to FIQ
+    bool undef_trap = false;      // opt-in: trap unimplemented encodings to VEC_UNDEF
+                                  // (default keeps the permissive skip the carts rely on)
 
     // ---- flags (NZCV in bits 31..28) ----
     bool N() const { return cpsr >> 31 & 1; }  bool Z() const { return cpsr >> 30 & 1; }
@@ -32,7 +58,69 @@ struct CPU {
     void setV(bool v){ cpsr = (cpsr & ~(1u<<28)) | (uint32_t(v)<<28); }
     void setNZ(uint32_t x){ setN(x>>31&1); setZ(x==0); }
 
-    void reset(uint32_t entry){ for(auto&x:r)x=0; r[15]=entry; cpsr=0x1F; halted=false; cycles=0; }
+    void reset(uint32_t entry){
+        for(auto&x:r)x=0; r[15]=entry; cpsr=0x1F; halted=false; cycles=0; tcycles=0;
+        for(int i=0;i<6;i++){ bank13[i]=bank14[i]=bankspsr[i]=0; }
+        for(int i=0;i<5;i++){ usr_r8_12[i]=fiq_r8_12[i]=0; }
+        // Bring-up convention: boot in System mode with interrupts enabled but no
+        // source armed (bus IRQ mask = 0), so existing carts behave exactly as
+        // before; a cart arms interrupts explicitly to receive them.
+    }
+
+    // ---- modes, banking, SPSR --------------------------------------------------
+    static int bankIdx(uint32_t m){
+        switch(m & 0x1F){
+            case MODE_FIQ: return 1;  case MODE_IRQ: return 2;  case MODE_SVC: return 3;
+            case MODE_ABT: return 4;  case MODE_UND: return 5;  default: return 0; // usr/sys
+        }
+    }
+    int  modeIdx() const { return bankIdx(cpsr); }
+    uint32_t& spsr(){ return bankspsr[modeIdx()]; }   // usr/sys: index 0 acts as scratch
+
+    // Switch processor mode, swapping the banked r13/r14 (and r8-r12 for FIQ).
+    void set_mode(uint32_t nm){
+        int oi = bankIdx(cpsr), ni = bankIdx(nm);
+        if(oi != ni){
+            bank13[oi] = r[13]; bank14[oi] = r[14];
+            if(oi==1) for(int i=0;i<5;i++) fiq_r8_12[i]=r[8+i];
+            else      for(int i=0;i<5;i++) usr_r8_12[i]=r[8+i];
+            r[13] = bank13[ni]; r[14] = bank14[ni];
+            if(ni==1) for(int i=0;i<5;i++) r[8+i]=fiq_r8_12[i];
+            else      for(int i=0;i<5;i++) r[8+i]=usr_r8_12[i];
+        }
+        cpsr = (cpsr & ~0x1Fu) | (nm & 0x1F);
+    }
+
+    // Enter an exception: bank in `newmode`, save the old CPSR to its SPSR, set the
+    // return link, force ARM state, mask IRQ (and FIQ on reset/FIQ), vector the PC.
+    void exception(uint32_t vector, uint32_t newmode, uint32_t lr, bool disableF){
+        uint32_t saved = cpsr;
+        set_mode(newmode);
+        spsr() = saved;
+        r[14] = lr;
+        cpsr &= ~0x20u;            // execute the handler in ARM state
+        cpsr |= 0x80u;             // mask IRQ
+        if(disableF) cpsr |= 0x40u;// mask FIQ
+        r[15] = vector;
+        tcycles += 3;              // 2S + 1N pipeline refill
+    }
+
+    // Take a pending FIQ/IRQ if unmasked and the bus is asserting the line. Checked
+    // before every fetch. Handlers return with SUBS PC, LR, #4.
+    bool service_interrupts(){
+        if(!bus) return false;
+        if(!(cpsr & 0x40u) && bus->fiq_line()){ exception(VEC_FIQ, MODE_FIQ, r[15] + 4, true);  return true; }
+        if(!(cpsr & 0x80u) && bus->irq_line()){ exception(VEC_IRQ, MODE_IRQ, r[15] + 4, false); return true; }
+        return false;
+    }
+
+    // Restore CPSR from the current mode's SPSR (exception return) and realign PC.
+    void return_from_exception(){
+        uint32_t sp = spsr();
+        set_mode(sp & 0x1F);
+        cpsr = sp;
+        if(cpsr & 0x20u) r[15] &= ~1u; else r[15] &= ~3u;
+    }
 
     bool cond(uint32_t c) const {
         switch(c){
@@ -77,48 +165,91 @@ struct CPU {
         return shift(rm, type, amt, carry);
     }
 
+    // ARM7 MUL internal cycles (m): 1..4 by the significant bytes of Rs.
+    static int mul_m(uint32_t rs){
+        if((rs&0xFFFFFF00)==0 || (rs&0xFFFFFF00)==0xFFFFFF00) return 1;
+        if((rs&0xFFFF0000)==0 || (rs&0xFFFF0000)==0xFFFF0000) return 2;
+        if((rs&0xFF000000)==0 || (rs&0xFF000000)==0xFF000000) return 3;
+        return 4;
+    }
+
     void step() {
+        if (service_interrupts()) return;           // FIQ/IRQ taken before the fetch
         if (cpsr & 0x20) { thumb_step(); return; }  // CPSR.T set → Thumb state
         uint32_t pc = r[15];
         uint32_t insn = bus->r32(pc);
         r[15] = pc + 8;                      // ARM PC reads as insn+8
         cycles++;
-        if (!cond(insn>>28)) { r[15] = pc + 4; return; }
+        if (!cond(insn>>28)) { r[15] = pc + 4; tcycles += 1; return; }   // 1S
 
         if ((insn&0x0FFFFFF0)==0x012FFF10) {       // BX — switches ARM/Thumb via bit0
             uint32_t t = r[insn&0xF];
             if (t & 1) cpsr |= 0x20; else cpsr &= ~0x20u;
-            r[15] = t & ~1u; return;
+            r[15] = t & ~1u; tcycles += 3; return;              // 2S+1N
         }
         if ((insn&0x0F000000)==0x0A000000 || (insn&0x0F000000)==0x0B000000) { // B / BL
             int32_t off = int32_t(insn<<8)>>6;      // sign-extend 24-bit, <<2
             if(insn&0x01000000) r[14]=pc+4;         // BL: link
-            r[15] = pc + 8 + off; return;
+            r[15] = pc + 8 + off; tcycles += 3; return;         // 2S+1N
+        }
+        if ((insn&0x0F000000)==0x0F000000) {        // SWI / SVC
+            exception(VEC_SWI, MODE_SVC, pc + 4, false); return;  // LR = next instruction
         }
         if ((insn&0x0FC000F0)==0x00000090) {        // MUL / MLA
             uint32_t rd=(insn>>16)&0xF, rn=(insn>>12)&0xF, rs=(insn>>8)&0xF, rm=insn&0xF;
             uint32_t res=r[rm]*r[rs]; if(insn&0x00200000) res+=r[rn];
-            r[rd]=res; if(insn&0x00100000) setNZ(res); r[15]=pc+4; return;
+            r[rd]=res; if(insn&0x00100000) setNZ(res); r[15]=pc+4;
+            tcycles += 1 + mul_m(r[rs]) + ((insn&0x00200000)?1:0); return;
         }
-        if ((insn&0x0FBF0FFF)==0x010F0000) {        // MRS
-            r[(insn>>12)&0xF]=cpsr; r[15]=pc+4; return;
+        if ((insn&0x0FBF0FFF)==0x010F0000) {        // MRS (CPSR or SPSR)
+            r[(insn>>12)&0xF] = (insn&0x00400000) ? spsr() : cpsr;
+            r[15]=pc+4; tcycles += 1; return;
         }
-        if ((insn&0x0DB0F000)==0x0120F000) {        // MSR (reg or imm, cpsr)
+        if ((insn&0x0DB0F000)==0x0120F000) {        // MSR (reg or imm; CPSR or SPSR)
             bool I=(insn>>25)&1; bool c; uint32_t v = I? op2(insn,true,c) : r[insn&0xF];
             uint32_t mask=0; if(insn&0x00080000)mask|=0xFF000000; if(insn&0x00010000)mask|=0x000000FF;
-            cpsr=(cpsr&~mask)|(v&mask); r[15]=pc+4; return;
+            if(insn&0x00400000){ spsr() = (spsr() & ~mask) | (v & mask); }   // SPSR
+            else {                                                           // CPSR
+                uint32_t nc = (cpsr & ~mask) | (v & mask);
+                set_mode(nc & 0x1F);                    // bank-swap if the mode byte changed
+                cpsr = (cpsr & 0x1Fu) | (nc & ~0x1Fu);  // keep the new mode bits, apply the rest
+            }
+            r[15]=pc+4; tcycles += 1; return;
         }
         uint32_t top=(insn>>26)&3;
         if (top==0) {                                // data processing
-            uint32_t opc=(insn>>21)&0xF, rd=(insn>>12)&0xF;
+            uint32_t opc=(insn>>21)&0xF, rd=(insn>>12)&0xF; bool S=(insn>>20)&1;
+            bool reg_shift = !(insn&0x02000000) && (insn&0x10);   // register-specified shift
             data_proc(insn);
             bool writes_pc = rd==15 && !(opc>=0x8 && opc<=0xB);   // not TST/TEQ/CMP/CMN
-            if(!writes_pc) r[15]=pc+4;               // else the op branched (PC stands)
+            if(writes_pc){
+                if(S) return_from_exception();       // MOVS/SUBS PC,LR → restore CPSR from SPSR
+                tcycles += 3 + (reg_shift?1:0);      // 2S+1N pipeline refill; PC stands otherwise
+            } else {
+                r[15]=pc+4; tcycles += 1 + (reg_shift?1:0);      // 1S (+1I reg-shift)
+            }
             return;
         }
-        if (top==1) { load_store(insn); if(((insn>>12)&0xF)!=15) r[15]=pc+4; return; }
-        if (top==2 && ((insn>>25)&1)==0) { block_transfer(insn); if(!(insn&(1<<15)&&(insn&(1<<20)))) r[15]=pc+4; return; }
-        r[15]=pc+4;                                  // unimplemented → skip (reference is permissive)
+        if (top==1) {                                // single load/store
+            bool pc_ld = ((insn>>12)&0xF)==15 && (insn&0x00100000);
+            load_store(insn);
+            if(!pc_ld) r[15]=pc+4;
+            tcycles += (insn&0x00100000) ? (3 + (pc_ld?2:0)) : 2;   // LDR 1S+1N+1I(+refill); STR 2N
+            return;
+        }
+        if (top==2 && ((insn>>25)&1)==0) {           // block transfer (LDM/STM)
+            uint32_t list=insn&0xFFFF; int n=0; for(int i=0;i<16;i++) if(list>>i&1) n++;
+            bool pc_ld = (list&0x8000) && (insn&0x00100000);
+            bool s_ret = pc_ld && (insn&0x00400000);   // LDM {..,pc}^ : restore CPSR from SPSR
+            block_transfer(insn);
+            if(s_ret) return_from_exception();
+            else if(!pc_ld) r[15]=pc+4;
+            if(insn&0x00100000) tcycles += n + 2 + (pc_ld?2:0);     // LDM nS+1N+1I (+refill)
+            else                tcycles += (n>0?n-1:0) + 2;         // STM (n-1)S+2N
+            return;
+        }
+        if (undef_trap) { exception(VEC_UNDEF, MODE_UND, pc + 4, false); return; }
+        r[15]=pc+4; tcycles += 1;                    // unimplemented → skip (reference is permissive)
     }
 
     void data_proc(uint32_t insn) {
@@ -140,7 +271,8 @@ struct CPU {
             case 0xE: res=a&~b; break;               case 0xF: res=~b; break;
         }
         if(wb) r[rd]=res;
-        if(S){ setNZ(res); if((opc>=0x2&&opc<=0x7)||opc==0xA||opc==0xB){ setC(cf); setV(vf); } else setC(cf); }
+        // rd==15 with S means "restore CPSR from SPSR" (handled in step) — not a flag update.
+        if(S && rd!=15){ setNZ(res); if((opc>=0x2&&opc<=0x7)||opc==0xA||opc==0xB){ setC(cf); setV(vf); } else setC(cf); }
     }
 
     void load_store(uint32_t insn) {
@@ -175,7 +307,7 @@ struct CPU {
         uint16_t op = bus->r16(pc);
         r[15] = pc + 2;                     // will be overridden by branches
         uint32_t rpc = pc + 4;              // Thumb PC reads +4
-        cycles++;
+        cycles++; tcycles += 1;             // ~1S/instruction (branches add refill below)
         uint32_t h = op >> 13;
 
         if (h == 0) {
@@ -275,8 +407,8 @@ struct CPU {
                 for(int i=0;i<8;i++) if(list>>i&1){ if(op&0x800) r[i]=bus->r32(a); else bus->w32(a,r[i]); a+=4; }
                 r[rn]=a; return; }
             uint32_t c=op>>8&0xF;                             // fmt 16: conditional branch / SWI
-            if(c==0xF) return;                                // SWI: ignored in the reference
-            if(cond(c)) r[15]=rpc + int32_t(int8_t(op&0xFF))*2;
+            if(c==0xF){ exception(VEC_SWI, MODE_SVC, pc + 2, false); return; }  // Thumb SWI → SVC
+            if(cond(c)){ r[15]=rpc + int32_t(int8_t(op&0xFF))*2; tcycles += 2; }
             return;
         }
         // h == 7

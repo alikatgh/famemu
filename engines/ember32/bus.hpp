@@ -11,6 +11,12 @@
 //   0x00C TILESET_ADDR RAM addr of tile pixels (8bpp, 64 bytes/tile)
 //   0x010 TILESET_CNT
 //   0x014 FRAME        read-only, ++ each render (lets a cart animate)
+//   0x018 INPUT        read-only, pad buttons
+//   Interrupt controller (drives the CPU IRQ/FIQ lines; bit 0 = VBLANK, set each render):
+//   0x020 IRQ_ENABLE   sources that assert IRQ
+//   0x024 IRQ_FLAGS    read: pending sources; write: 1-bits acknowledge (clear)
+//   0x028 FIQ_ENABLE   sources that assert FIQ (checked before IRQ)
+//   0x02C IRQ_RAISE    write: 1-bits set flags (software interrupt)
 //   Layer L (0x040 + L*0x40, L=0..5):
 //     +00 ENABLE  +04 MAP_ADDR  +08 MAP_W  +0C MAP_H  +10 SCROLL_X  +14 SCROLL_Y
 //     +18 ANGLE(16.16 rad)  +1C SCALE(16.16, 1.0=0x10000)  +20 PRIORITY  +24 BLEND
@@ -35,6 +41,13 @@ struct Bus {
     uint32_t frame = 0;
     uint32_t input = 0;                                  // pad buttons (read at MMIO+0x18)
 
+    // Interrupt controller. VBLANK (bit 0) is raised each render; a cart arms it
+    // via IRQ_ENABLE / FIQ_ENABLE. The CPU polls these lines before every fetch.
+    static const uint32_t IRQ_VBLANK = 1;
+    uint32_t irq_enable = 0, fiq_enable = 0, irq_flags = 0;
+    bool irq_line() const { return (irq_flags & irq_enable) != 0; }
+    bool fiq_line() const { return (irq_flags & fiq_enable) != 0; }
+
     Bus() { ram = new uint8_t[RAM_SIZE]; std::memset(ram, 0, RAM_SIZE); }
     ~Bus() { delete[] ram; }
     Bus(const Bus&) = delete; Bus& operator=(const Bus&) = delete;
@@ -43,8 +56,13 @@ struct Bus {
     uint16_t r16(uint32_t a) const { return a + 1 < RAM_SIZE ? uint16_t(ram[a] | ram[a+1] << 8) : 0; }
     uint32_t r32(uint32_t a) const {
         if (a + 3 < RAM_SIZE) return ram[a] | ram[a+1]<<8 | ram[a+2]<<16 | uint32_t(ram[a+3])<<24;
-        if (a - MMIO == 0x14) return frame;              // FRAME counter
-        if (a - MMIO == 0x18) return input;              // pad buttons
+        switch (a - MMIO) {
+            case 0x14: return frame;                     // FRAME counter
+            case 0x18: return input;                     // pad buttons
+            case 0x20: return irq_enable;
+            case 0x24: return irq_flags;                 // pending interrupt sources
+            case 0x28: return fiq_enable;
+        }
         return 0;
     }
     void w8(uint32_t a, uint8_t v)  { if (a < RAM_SIZE) ram[a] = v; else mmio(a, v); }
@@ -63,7 +81,13 @@ private:
     void mmio(uint32_t a, uint32_t v) {
         uint32_t off = a - MMIO;
         if (off < REG_BYTES) reg[off/4] = v;
-        if (off == 0x04 && v) apply();
+        switch (off) {
+            case 0x04: if (v) apply();     break;   // RENDER
+            case 0x20: irq_enable = v;     break;
+            case 0x24: irq_flags &= ~v;    break;   // write-1-to-clear (acknowledge)
+            case 0x28: fiq_enable = v;     break;
+            case 0x2C: irq_flags |= v;     break;   // software raise
+        }
     }
 
     void apply() {
@@ -102,6 +126,7 @@ private:
         gpu.sprite_count = maxsp;
         gpu.render();
         rendered = true; frame++;
+        irq_flags |= IRQ_VBLANK;                         // vblank — the CPU picks it up if armed
     }
 };
 

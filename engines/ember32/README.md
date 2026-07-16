@@ -26,7 +26,7 @@ executable.
 | **Feature/verification gate** (`tools/test_features.cpp`) | **done** — 9 cases (affine, alpha/additive blend, priority, quad, line-scroll, ARM + Thumb CPU) hashed against frozen goldens; `--bless` reblesses. CI-ready; the fast core verifies against this |
 | **C ABI facade** (`famemu_ember32_core.cpp`) | **done + verified** — implements `FamemuCoreAPI` (load_rom / run_frame / video_rgb / audio / set_input / save-state); a ROM loads, runs a frame, and returns video through the same interface as Ember 8/16 (`tools/facade_test.cpp`) |
 | **`.e32` cartridge file + app registration** (`tools/make_cart.cpp`, `tools/cart_file_test.cpp`) | **done + verified** — `make_cart` emits a flat `.e32` ROM image (program at 0, cart data at 0x1000+); `cart_file_test` loads it from disk through the facade exactly as the app does (fread → `load_rom` → `run_frame` → `video_rgb`) and confirms real content (320×240, scaled layer + bright sprite). The famemu app registers `builtin:ember32` (raw 24-bit RGB, Library “Ember 32” category) |
-| Banked FIQ/IRQ modes + exceptions + exact bus timing | **TODO** |
+| **Banked modes + exceptions + exact bus timing** (`cpu_arm7.hpp`, `bus.hpp`) | **done + verified** — the 7 processor modes with banked r13/r14 (+ r8-r12 for FIQ) and per-mode SPSR; the exception entry/return sequence for Reset/Undef/SWI/PAbort/DAbort/IRQ/FIQ (vectors 0x00-0x1C); SWI (ARM + Thumb); an IRQ/FIQ controller on the bus (IRQ_ENABLE/FLAGS/FIQ_ENABLE, VBLANK source) driving the CPU lines; and an S/N/I bus-cycle counter (`tcycles`). `tools/exception_test.cpp` proves banked SPs, SPSR, FIQ-banked r8 isolation, live IRQ+FIQ delivery, and hand-counted timing (12/12) |
 | A separate optimised fast core (verified vs this reference) | **TODO** (phase 4) |
 
 ## Run the bring-up
@@ -54,6 +54,17 @@ c++ -std=c++17 -O2 -I.. tools/cart_file_test.cpp famemu_ember32_core.cpp -o /tmp
 The same `.e32` runs in the famemu app as `builtin:ember32` (raw 24-bit RGB,
 320×240; Library → **Ember 32**). `cart_file_test` asserts the frame is real
 content (scaled layer + bright sprite), not a flat backdrop.
+
+## Verify the privileged machine (modes, exceptions, timing)
+
+```sh
+c++ -std=c++17 -O2 -I.. tools/exception_test.cpp -o /tmp/e32exc && /tmp/e32exc
+```
+
+A firmware-style ROM (vector table + handlers) sets a distinct SP per mode and a
+FIQ-banked r8, then takes a SWI, an IRQ (vblank) and a FIQ (vblank routed to
+FIQ); the test checks banked SPs, SPSR, FIQ register isolation, live interrupt
+delivery, and the hand-counted S/N/I cycle total (12/12).
 
 ## Architecture
 
