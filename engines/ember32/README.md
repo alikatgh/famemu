@@ -16,13 +16,13 @@ executable.
 | System skeleton (`ember32.hpp`) | seam in place; holds the compositor + framebuffer accessor |
 | Bring-up smoke test (`tools/bringup.cpp`) | renders a demo scene (2 affine layers + 6 blended affine sprites, priority-interleaved) to a PPM |
 | **ARM7 CPU (ARM state)** (`cpu_arm7.hpp`) | **done + bring-up-verified** — data-proc (all opcodes, imm/reg/shifted operands, flags), MUL/MLA, LDR/STR, LDM/STM, B/BL, MRS/MSR |
-| **Memory bus + MMIO** (`bus.hpp`) | **done** — 4 MB RAM + an MMIO window onto the GPU; an ARM program configures a scene + triggers render (`tools/cpu_bringup.cpp`) |
-| Thumb / banked FIQ-IRQ modes / exact bus timing | **TODO** (the CPU runs real ARM programs; these harden it) |
-| Full MMIO map (every layer/sprite/palette/VRAM field) | **TODO** (small map today; grows without moving the CPU/GPU) |
+| **Memory bus + MMIO map** (`bus.hpp`) | **done** — 4 MB RAM + a register block (palette/tileset/6 layers/1024 sprites, by console address); a cart lays data in RAM and configures the scene, RENDER composites |
 | **Optional textured-quad unit** (`compositor.hpp` `Quad`) | **done** — affine-textured quads, priority-composited with layers/sprites (perspective floor + rotated banner, `tools/quad_bringup.cpp`) |
 | **Audio: 32 voices + ADSR + pan** (`audio.hpp`) | **done** — pitched PCM voices, ADSR envelopes, stereo pan → 48 kHz mix; verified as a chord WAV (`tools/audio_bringup.cpp`). ADPCM / reverb / streamed channels = follow-ons |
+| **Phase 3 — bring-up cartridge** (`tools/cart_bringup.cpp`) | **done** — an ARM program configures a scrolling scaled layer + a scaled/rotated sprite via MMIO, renders, end to end |
+| **Phase 3 — out the RF path** (`rf_composite.hpp`) | **done** — the frame goes through an NTSC composite encode/decode (the platform signature); the cart writes clean + composite frames |
+| Thumb / banked modes / exact bus timing | **TODO** (the CPU runs real ARM programs; these harden it) |
 | Per-scanline register tables (HDMA-class) | **TODO** |
-| Thumb / banked modes / exact bus timing | **TODO** |
 | Feature test carts + fast-core lockstep gates | **TODO** (phase 4) |
 
 ## Run the bring-up
