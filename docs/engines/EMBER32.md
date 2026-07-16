@@ -1,15 +1,17 @@
 # Ember 32 — specification
 
-The 32-bit Ember console. **Status: design-frozen, unbuilt.** This is the spec
-chosen from [EMBER32_SCOPE.md](EMBER32_SCOPE.md) — a **2D-first 32-bit console on
-a real RISC CPU, with an optional textured-quad unit for pseudo-3D**. It keeps
-the pixel-art soul and the RF/analog-TV signature of Ember 8/16 while taking a
-real generational leap in sprites, colour, scaling and sound. Numbers here are
-the target contract for the reference implementation; they may be refined during
+The 32-bit Ember console. **Status: design-frozen; phase 2 (reference model)
+underway — the 2D compositor is done and bring-up-verified** (see
+[`engines/ember32/`](../../engines/ember32/)). This is the spec chosen from
+[EMBER32_SCOPE.md](EMBER32_SCOPE.md) — a **2D-first 32-bit console on a real RISC
+CPU, with an optional textured-quad unit for pseudo-3D**. It keeps the pixel-art
+soul and the RF/analog-TV signature of Ember 8/16 while taking a real
+generational leap in sprites, colour, scaling and sound. Numbers here are the
+target contract for the reference implementation; they may be refined during
 bring-up but not without updating this file.
 
-Source (planned): `engines/ember32/`. Facade: `famemu_ember32_core()`.
-`system_id`: `ember32`.
+Source: `engines/ember32/` (reference model in progress). Facade:
+`famemu_ember32_core()` (added when wired into the app). `system_id`: `ember32`.
 
 ## At a glance
 
@@ -117,14 +119,24 @@ It becomes the model for store submissions, as KORA is for Ember 16.
 ## Build phases (see EMBER32_SCOPE.md §6)
 
 1. **Spec** — this document. ✅
-2. **Reference model** — the portable C compositor + CPU + audio; correctness first.
+2. **Reference model** — the portable C model; correctness first. 🔄 **in progress**:
+   the 2D compositor is done + bring-up-verified (`engines/ember32/compositor.hpp`,
+   `tools/bringup.cpp`); CPU, MMIO, per-scanline tables, audio and the quad unit next.
 3. **Bring-up cart** — boots, scrolls, draws a scaled/rotated sprite, out the RF path, screenshot.
 4. **Fast core + gates** — optimise, verify vs the reference, feature carts in CI.
 5. **Toolchain + launch title** — wick support + the first original game.
 
-## Open refinements
+## Decisions (the scope's open questions, resolved)
 
-The `EMBER32_SCOPE.md` open questions that could still move a number here: CPU
-choice (ARM vs MIPS vs SH-2), how much 3-D (none / quad-only / real polygons),
-and clone-a-real-class vs. this fantasy-spec approach. Changing any of those
-updates this file before phase 2 begins.
+Settled for phase 2 — changing any of these re-opens the spec:
+
+- **CPU = ARM7TDMI-class.** Mature, free toolchain (`clang`/`gcc`, ARM + Thumb) and
+  good reference cores to cross-check timing; ideal for a 2D-first machine. MIPS /
+  SH-2 would fit an early-3D pivot — not our direction.
+- **3-D = quad-only.** The optional textured/Gouraud quad unit, *no* general polygon
+  GPU: pseudo-3D for those who want it, with no 3-D content pipeline required to ship
+  a game. A full polygon pipeline is deferred to a separate "Ember 3D" project.
+- **Fantasy-spec, verified vs. our own reference model.** Ember 32 is an original
+  design (not a clone of one console), so the authority is the portable C model in
+  [`engines/ember32/`](../../engines/ember32/) — already begun; the compositor is
+  done and bring-up-verified.
