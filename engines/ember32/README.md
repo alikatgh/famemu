@@ -18,7 +18,8 @@ executable.
 | **ARM7 CPU (ARM state)** (`cpu_arm7.hpp`) | **done + bring-up-verified** — data-proc (all opcodes, imm/reg/shifted operands, flags), MUL/MLA, LDR/STR, LDM/STM, B/BL, MRS/MSR |
 | **Memory bus + MMIO map** (`bus.hpp`) | **done** — 4 MB RAM + a register block (palette/tileset/6 layers/1024 sprites, by console address); a cart lays data in RAM and configures the scene, RENDER composites |
 | **Optional textured-quad unit** (`compositor.hpp` `Quad`) | **done** — affine-textured quads, priority-composited with layers/sprites (perspective floor + rotated banner, `tools/quad_bringup.cpp`) |
-| **Audio: 32 voices + ADSR + pan** (`audio.hpp`) | **done** — pitched PCM voices, ADSR envelopes, stereo pan → 48 kHz mix; verified as a chord WAV (`tools/audio_bringup.cpp`). ADPCM / reverb / streamed channels = follow-ons |
+| **Audio: 32 voices + ADSR + pan** (`audio.hpp`) | **done** — pitched PCM voices, ADSR envelopes, stereo pan → 48 kHz mix; verified as a chord WAV (`tools/audio_bringup.cpp`) |
+| **Audio DSP: ADPCM + echo/reverb + streamed channels** (`audio.hpp`) | **done + verified** — IMA ADPCM decode (`ima_adpcm_decode`, block-threaded state), 4 streamed PCM channels (`Stream`, refillable), and a feedback echo/reverb bus (`Echo`: delay + feedback + damping). `tools/audio_dsp_test.cpp` checks exact ADPCM samples, round-trip fidelity (5.3% RMS), the echo impulse response, and sample-accurate streaming (8/8); the default `mix()` is byte-identical so the chord WAV is unchanged |
 | **Phase 3 — bring-up cartridge** (`tools/cart_bringup.cpp`) | **done** — an ARM program configures a scrolling scaled layer + a scaled/rotated sprite via MMIO, renders, end to end |
 | **Phase 3 — out the RF path** (`rf_composite.hpp`) | **done** — the frame goes through an NTSC composite encode/decode (the platform signature); the cart writes clean + composite frames |
 | **Per-scanline raster tables (HDMA-class)** (`compositor.hpp` `line_sx/sy`) | **done** — per-output-line layer offsets; a water-reflection ripple demo (`tools/raster_bringup.cpp`) |
@@ -65,6 +66,15 @@ A firmware-style ROM (vector table + handlers) sets a distinct SP per mode and a
 FIQ-banked r8, then takes a SWI, an IRQ (vblank) and a FIQ (vblank routed to
 FIQ); the test checks banked SPs, SPSR, FIQ register isolation, live interrupt
 delivery, and the hand-counted S/N/I cycle total (12/12).
+
+## Verify the audio DSP (ADPCM, echo, streaming)
+
+```sh
+c++ -std=c++17 -O2 -I.. tools/audio_dsp_test.cpp -o /tmp/e32ad && /tmp/e32ad
+```
+
+Checks IMA ADPCM decode (exact samples + a sine round-trip), the echo bus impulse
+response, and sample-accurate streamed playback (8/8).
 
 ## Architecture
 
