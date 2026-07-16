@@ -14,6 +14,28 @@ Global rules: `~/.claude/CLAUDE.md`.
 
 Before reproducing, grep this list for the shape of your bug.
 
+- **An HLE coprocessor op that indexes a local/RAM array with a game-supplied byte
+  must bound the index to the ARRAY size, not just to a game-supplied count.** CX4
+  `op_draw_wireframe` guarded edge indices with `a < nv` (nv = a RAM byte, up to 255)
+  but the `px[]`/`py[]` arrays are 128 → OOB stack read. Bound to `min(count, arraysize)`.
+  Grep each chip for `arr[ram_[…]]` / `arr[game_reg]` and fuzz-drive its command ports
+  under ASAN. (Confirmed safe by this rule: ST010/SuperFX/S-DD1/DSP2.)
+- **An arithmetic operand taken from a header/command byte can be UB on hostile input
+  even when every real ROM is fine — fuzz under `-fsanitize=undefined`, not just ASAN.**
+  Two shapes found by adversarial fuzzing: (1) a variable SHIFT amount from a raw header
+  byte — `1024u << sram_kb_log` (snes_system_impl.hpp, byte 0-255) shifts a 32-bit value
+  by >= 32 = UB; bound it to the type width (treat an implausible size as none). (2) an
+  intermediate that SUMS SQUARED inputs — DSP1 Range/Distance `x*x+y*y+z*z` overflowed
+  int32/uint32 on garbage command words; widen the accumulator to 64-bit. Real games
+  stay in range (golden CRCs identical), so unit tests miss both. Grep for `<< reg`/
+  `<< byte` and `a*a + …` in HLE math and drive the load + command ports under UBSan.
+- **Any signed counter/index restored from a SAVE-STATE must be clamped on load
+  before it indexes an array.** A tampered/truncated state can put a garbage
+  (esp. NEGATIVE) value in a render counter; NES `scanline_` negative slipped past
+  `scanline_ < 240` into an OOB `fb_[]` write. The `StateReader` bounds the *buffer*
+  read, but not the *semantic* range of loaded values — add a `post_load()` clamp
+  per component and call it in `state_load`. Fuzz it: bit-flip/truncate a saved
+  state, load, run frames, assert no crash.
 - **Unvalidated CLI float knobs: clamp/floor before use** — a negative float
   cast to an unsigned type is UB, and `1/(2*x*x)` with `x=0` makes
   `inf->NaN` that survives `std::clamp` into a float->int cast.
@@ -61,12 +83,41 @@ script name → one-line "what bug it was built to catch".
 - `engines/snes/tests/features/build.sh` — rebuilds all feature/coprocessor
   test ROMs (ca65) and patches real header checksums at an EXPLICIT offset
   (guessing the offset from the image mis-detects the mapping).
+- `engines/snes/tests/snes_cpu_fuzz.cpp` — mutates a real ROM (header + code) and
+  runs frames so loaded ROMs execute garbage 65816 code; catches OOB/UB on the
+  load+run path (found the `snes_system_impl.hpp` shift-UB). Build under ASAN/UBSan.
+- `engines/snes/tests/sa1_mmio_fuzz.cpp` — hammers the SA-1 MMIO command ports
+  (0x2200-0x23FF) with random writes + `run_line()` steps; catches OOB/UB reachable
+  purely through a hostile driver poking the ports. ASAN/UBSan, 300k ops clean.
+- `engines/snes/tests/snes_state_fuzz.cpp` — bit-flips/truncates a real SNES snapshot,
+  reloads + runs; the SNES analogue of `nes/tests/state_fuzz.cpp`. Catches corrupt-
+  save-state OOB (the NES PPU-counter / SPC7110 class). ASAN/UBSan, 20k states clean.
 
 ---
 
 ## Chronological log
 
 Newest first. Five lines max per entry. File:line citations beat prose.
+
+### 2026-07-15 (PM) · Coprocessor + CPU adversarial fuzz: DSP1 signed-overflow + loader shift UB
+Symptom: fuzzing under UBSan — (a) DSP1 Range(0x18/0x38)/Distance(0x28) `in*in+…` overflowed int32_t/uint32_t on adversarial command words (dsp1.hpp); (b) an adversarial-code SNES ROM tripped `shift exponent 140 too large` at snes_system_impl.hpp:60.
+Cause: (a) the sum-of-squares intermediates were 32-bit — real games stay in range, a hostile input doesn't; (b) `1024u << sram_kb_log` where `sram_kb_log = rom_[hdr+0x18]` is a raw header byte (0-255) → shift-by->=32 = UB.
+Fix: (a) widen the DSP1 accumulators to int64_t/uint64_t (the `emit` truncation is identical for valid inputs); (b) treat `sram_kb_log > 12` as "no SRAM" before the shift. No behavior change — golden 66/66 CRCs identical, famemu gate digest unchanged.
+Verified: golden suite under ASAN/UBSan = 66 checked, 0 mismatched, 0 errors. New regressions: `snes/tests/snes_cpu_fuzz.cpp` (1500 mutated ROMs run garbage 65816 code) + `snes/tests/sa1_mmio_fuzz.cpp` (300k SA-1 command-port ops) + `snes/tests/snes_state_fuzz.cpp` (20k corrupt save-states, the SNES analogue of the NES `state_fuzz`) — all no-OOB/no-UB. CX4 all-command + ST010 all-command (400k each) also clean; DSP2 memory-safe.
+Lesson: see the new scan-pattern bullet — a shift/size/accumulator fed by a header or command byte can be UB on hostile input no real ROM produces. Fuzz the load + command ports under UBSan, not ASAN alone; well-formed golden ROMs never reach these operands.
+
+### 2026-07-15 · SNES coprocessor audit: CX4 wireframe OOB read (ASAN-proven) + SPC7110 index
+Symptom: `cx4.hpp` `op_draw_wireframe` — a crafted vertex header (`nv = ram_[0x0000]` up to 255) with an edge index in [128, nv) read the local `px[128]`/`py[128]` stack arrays OOB; ASAN: `stack-buffer-overflow READ` at cx4.hpp:189, `'px' (line 162)`.
+Cause: the edge guard was `a < nv`, but only `px[0..min(nv,128)-1]` are computed (the vertex loop caps at 128). `a < nv` allowed indices past the 128-entry arrays.
+Fix: bound to `nvv = min(nv,128)` — `if (a < nvv && b2 < nvv)`. Proven: ASAN errors on the old guard, clean on the fix (regression: `snes/tests/cx4_oob_test.cpp`). Also SPC7110 `bitplane_[bp_index_++]` (serialized `bp_index_`, no guard → OOB write from a corrupt state): reset if `> 14` before the write (defensive, matches the pattern; KAT still 3/3). Audited ST010/SuperFX/S-DD1(+its DMA caller: `count` is 0→0x10000-converted before `cc1buf.assign(count+64)`, so bounded)/DSP2 — all safe.
+Lesson: HLE coprocessor ops derive array indices from game/SAVE-STATE-controlled bytes; bound EVERY such index to the actual array size, not just to a game-supplied count. Audit each chip's `arr[game_value]` and fuzz under ASAN.
+
+### 2026-07-15 · Corrupt/tampered NES save-state → OOB crash (unclamped render counters)
+Symptom: loading a bit-flipped/truncated save-state then running a frame SIGSEGVs (found by a corrupt-state fuzz test through the famemu C API).
+Cause: `nes/ppu.hpp` serializes signed `scanline_`/`dot_`/`scan_count_`; a garbage NEGATIVE `scanline_` passes `scanline_ < 240` and hits `fb_[scanline_*256+x]` (ppu.cpp:271,304) OOB, and `scan_count_ > 8` OOB-reads `scan_sprites_[8]` (ppu.cpp:227).
+Fix: `Ppu::post_load()` clamps `scanline_`→[0,261], `dot_`→[0,340], `scan_count_`→[0,8]; called unconditionally in `system.hpp` `state_load` after deserialize. No-op for valid states (famemu replay-gate digest unchanged). SNES core fuzzed too — safe (line counters not serialized, fb written via bounded row loops).
+Verified: `nes/tests/state_fuzz.cpp` under ASAN/UBSan = memory-safe (no OOB). ROM path: `nes/tests/rom_fuzz.cpp`, 400k malformed ROMs + 100k ASAN — clean. Also normalized `bool` in the shared `StateReader` (scalar bools); struct-embedded APU channel bools stay a BENIGN UBSan residue (memcpy'd wholesale, read-as-true, no OOB) — a full close needs field-wise channel serialize.
+Lesson: see the new scan-pattern bullet — any signed counter restored from a save-state and used as an array index must be clamped on load. Fuzz both the ROM and save-state load paths under ASAN.
 
 ### 2026-07-14 (PM3) · Gate a decompressor you can't encode with a known-answer test
 Symptom: SPC7110 decompressor had no gate — no PD test cart, and hand-authoring a compressed stream needs the (unwritten) encoder.

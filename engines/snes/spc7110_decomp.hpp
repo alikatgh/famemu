@@ -345,6 +345,11 @@ inline void Spc7110Decomp::mode2(bool init) {
         const uint32_t data = morton_4x8(out0_);
         wbuf(static_cast<uint8_t>(data >> 24));
         wbuf(static_cast<uint8_t>(data >> 16));
+        // bp_index_ is serialized raw, so a corrupt/tampered save-state could set
+        // it past the valid {0,2,..,14}; the two writes below would then index
+        // bitplane_[16] out of bounds. Reset an out-of-range index (same class as
+        // the NES PPU / CX4 fixes). Valid runs stay in range, so this is a no-op.
+        if (bp_index_ > 14) bp_index_ = 0;
         bitplane_[bp_index_++] = static_cast<uint8_t>(data >> 8);
         bitplane_[bp_index_++] = static_cast<uint8_t>(data >> 0);
         if (bp_index_ == 16) {

@@ -178,11 +178,15 @@ private:
             px[i] = static_cast<int16_t>(cx + (x * dist) / depth);
             py[i] = static_cast<int16_t>(cy + (y * dist) / depth);
         }
-        // Edge list follows the vertices: pairs of vertex indices.
+        // Edge list follows the vertices: pairs of vertex indices. Only vertices
+        // 0..min(nv,128)-1 were actually computed into px/py (the loop caps at
+        // 128), so an edge index must be bounded by BOTH nv and the array size —
+        // `a < nv` alone lets a crafted nv>128 header index px[]/py[] out of bounds.
+        const int nvv = nv < 128 ? nv : 128;
         const int edges = 0x0010 + nv * 6;
         for (int e = 0; e < ne && e < 192; ++e) {
             const int a = ram_[edges + e * 2], b2 = ram_[edges + e * 2 + 1];
-            if (a < nv && b2 < nv) line(px[a], py[a], px[b2], py[b2]);
+            if (a < nvv && b2 < nvv) line(px[a], py[a], px[b2], py[b2]);
         }
     }
 

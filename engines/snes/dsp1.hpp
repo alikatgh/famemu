@@ -214,22 +214,25 @@ inline void Dsp1::execute() {
         }
 
         case 0x18: case 0x38: {  // Range: X^2+Y^2+Z^2-R^2 (high word)
-            const int32_t r =
-                (static_cast<int32_t>(in_[0]) * in_[0] +
-                 static_cast<int32_t>(in_[1]) * in_[1] +
-                 static_cast<int32_t>(in_[2]) * in_[2] -
-                 static_cast<int32_t>(in_[3]) * in_[3]) << 1;
-            emit((r >> 16) & 0xFFFF);
+            // int64: three int16^2 (each up to ~1.07e9) summed exceeds int32 for
+            // out-of-range inputs → signed overflow (UB). Real games stay in range,
+            // so the high word is identical; this just makes it defined.
+            const int64_t r =
+                (static_cast<int64_t>(in_[0]) * in_[0] +
+                 static_cast<int64_t>(in_[1]) * in_[1] +
+                 static_cast<int64_t>(in_[2]) * in_[2] -
+                 static_cast<int64_t>(in_[3]) * in_[3]) << 1;
+            emit(static_cast<int>((r >> 16) & 0xFFFF));
             break;
         }
 
         case 0x28: {  // Distance: sqrt(X^2+Y^2+Z^2)
-            const uint32_t r =
-                static_cast<uint32_t>(
-                    static_cast<int32_t>(in_[0]) * in_[0] +
-                    static_cast<int32_t>(in_[1]) * in_[1] +
-                    static_cast<int32_t>(in_[2]) * in_[2]);
-            emit(isqrt32(r << 1));
+            const uint64_t r =    // int64 sum: avoids the int overflow above (UB)
+                static_cast<uint64_t>(
+                    static_cast<int64_t>(in_[0]) * in_[0] +
+                    static_cast<int64_t>(in_[1]) * in_[1] +
+                    static_cast<int64_t>(in_[2]) * in_[2]);
+            emit(isqrt32(static_cast<uint32_t>(r << 1)));
             break;
         }
 

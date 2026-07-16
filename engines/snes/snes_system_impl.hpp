@@ -57,6 +57,10 @@ inline void SnesSystem::detect_mapping_and_chips() {
     const uint8_t map = rom_[hdr + 0x15];
     const uint8_t chip = rom_[hdr + 0x16];
     uint8_t sram_kb_log = rom_[hdr + 0x18];
+    // A garbage/hostile header byte would make (1024u << sram_kb_log) shift a
+    // 32-bit value by >= 32 (UB). Real ROMs use small logs (<= ~9); treat an
+    // implausible size as "no SRAM".
+    if (sram_kb_log > 12) sram_kb_log = 0;
     uint32_t sram_bytes = sram_kb_log ? (1024u << sram_kb_log) : 0;
     if ((map & 0x0F) == 3 || chip == 0x34 || chip == 0x35) {
         sa1_ = new Sa1(*this);

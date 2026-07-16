@@ -58,6 +58,17 @@ public:
         s.io(fb_);
     }
 
+    // After loading a (possibly corrupt/tampered) save-state, clamp the render
+    // counters into valid ranges. Otherwise a garbage signed `scanline_` / `dot_`
+    // / `scan_count_` indexes `fb_` / `scan_sprites_` out of bounds on the next
+    // frame — an OOB write/read that crashes (found by the corrupt-state fuzz
+    // test). Valid states are always in range, so this is a no-op for them.
+    void post_load() {
+        if (scanline_ < 0 || scanline_ > 261) scanline_ = 0;
+        if (dot_ < 0 || dot_ > 340) dot_ = 0;
+        if (scan_count_ < 0 || scan_count_ > 8) scan_count_ = 0;
+    }
+
 private:
     Cart& cart_;
 

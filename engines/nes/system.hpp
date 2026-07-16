@@ -82,6 +82,10 @@ public:
         r.io(magic);
         if (magic != kStateMagic) return false;
         serialize_all(r);
+        // Clamp render counters even if the load failed / was truncated: a partial
+        // or tampered state must never leave an out-of-range index that OOBs on the
+        // next frame (see Ppu::post_load).
+        ppu_.post_load();
         if (r.ok) apu_.post_load();
         return r.ok;
     }
