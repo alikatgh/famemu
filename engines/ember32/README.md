@@ -15,7 +15,10 @@ executable.
 | **2D compositor** (`compositor.hpp`) | **done + bring-up-verified** — 6 affine layers, 1024 affine sprites, 24-bit direct colour, normal/alpha/additive/subtractive blend, per-pixel priority, colour-key transparency |
 | System skeleton (`ember32.hpp`) | seam in place; holds the compositor + framebuffer accessor |
 | Bring-up smoke test (`tools/bringup.cpp`) | renders a demo scene (2 affine layers + 6 blended affine sprites, priority-interleaved) to a PPM |
-| ARM7TDMI-class CPU + 4 MB RAM + MMIO | **TODO** |
+| **ARM7 CPU (ARM state)** (`cpu_arm7.hpp`) | **done + bring-up-verified** — data-proc (all opcodes, imm/reg/shifted operands, flags), MUL/MLA, LDR/STR, LDM/STM, B/BL, MRS/MSR |
+| **Memory bus + MMIO** (`bus.hpp`) | **done** — 4 MB RAM + an MMIO window onto the GPU; an ARM program configures a scene + triggers render (`tools/cpu_bringup.cpp`) |
+| Thumb / banked FIQ-IRQ modes / exact bus timing | **TODO** (the CPU runs real ARM programs; these harden it) |
+| Full MMIO map (every layer/sprite/palette/VRAM field) | **TODO** (small map today; grows without moving the CPU/GPU) |
 | Per-scanline register tables (HDMA-class) | **TODO** |
 | 32-voice + streamed audio | **TODO** |
 | Optional textured-quad unit | **TODO** |
