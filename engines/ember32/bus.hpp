@@ -11,7 +11,14 @@
 //   0x00C TILESET_ADDR RAM addr of tile pixels (8bpp, 64 bytes/tile)
 //   0x010 TILESET_CNT
 //   0x014 FRAME        read-only, ++ each render (lets a cart animate)
-//   0x018 INPUT        read-only, pad buttons
+//   0x018 INPUT        read-only, pad 1 buttons
+//   0x01C INPUT2       read-only, pad 2 buttons (2-player carts)
+//   Audio voices (applied by the host each frame; regs live in the block):
+//   0x1F0 KEY_ON       write: bitmask of voices to (re)trigger — host clears
+//   0x1F4 KEY_OFF      write: bitmask of voices to release — host clears
+//   Voice V (0x200 + V*0x20, V=0..7):
+//     +00 SRC (RAM addr, s16 PCM)  +04 LEN (samples)  +08 RATE (16.16, 1.0=0x10000)
+//     +0C VOL (0..256)  +10 PAN (0..256, 128=center)  +14 LOOP (0 off; else start+1)
 //   Interrupt controller (drives the CPU IRQ/FIQ lines; bit 0 = VBLANK, set each render):
 //   0x020 IRQ_ENABLE   sources that assert IRQ
 //   0x024 IRQ_FLAGS    read: pending sources; write: 1-bits acknowledge (clear)
@@ -39,7 +46,8 @@ struct Bus {
     Compositor gpu;
     bool rendered = false;
     uint32_t frame = 0;
-    uint32_t input = 0;                                  // pad buttons (read at MMIO+0x18)
+    uint32_t input = 0;                                  // pad 1 buttons (MMIO+0x18)
+    uint32_t input2 = 0;                                 // pad 2 buttons (MMIO+0x1C)
 
     // Interrupt controller. VBLANK (bit 0) is raised each render; a cart arms it
     // via IRQ_ENABLE / FIQ_ENABLE. The CPU polls these lines before every fetch.
@@ -58,7 +66,8 @@ struct Bus {
         if (a + 3 < RAM_SIZE) return ram[a] | ram[a+1]<<8 | ram[a+2]<<16 | uint32_t(ram[a+3])<<24;
         switch (a - MMIO) {
             case 0x14: return frame;                     // FRAME counter
-            case 0x18: return input;                     // pad buttons
+            case 0x18: return input;                     // pad 1 buttons
+            case 0x1C: return input2;                    // pad 2 buttons
             case 0x20: return irq_enable;
             case 0x24: return irq_flags;                 // pending interrupt sources
             case 0x28: return fiq_enable;

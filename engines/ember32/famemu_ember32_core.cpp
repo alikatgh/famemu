@@ -40,11 +40,49 @@ int load_rom(const uint8_t* data, size_t len) {
 void unload_rom() { delete g; g = nullptr; }
 void reset() { if (g) { g->cpu.reset(0); g->bus.frame = 0; } }
 
+// Apply the cart's voice registers (bus.hpp map: 0x200 + V*0x20) to the audio
+// unit. Runs once per frame after the render; KEY_ON/KEY_OFF are edge commands
+// the host consumes (write-then-clear), everything else is level state.
+static void apply_audio_regs() {
+    uint32_t on  = g->bus.reg[0x1F0 / 4];
+    uint32_t off = g->bus.reg[0x1F4 / 4];
+    for (int v = 0; v < 8; v++) {
+        uint32_t b = (0x200 + v * 0x20) / 4;
+        Voice& vc = g->audio.voices[v];
+        uint32_t src = g->bus.reg[b + 0];
+        uint32_t len = g->bus.reg[b + 1];
+        if (on & (1u << v)) {
+            if (src + len * 2 <= Bus::RAM_SIZE && len > 0) {
+                vc.sample = reinterpret_cast<const int16_t*>(&g->bus.ram[src]);
+                vc.len = int(len);
+                uint32_t rate = g->bus.reg[b + 2];
+                vc.rate = (rate ? rate : 0x10000u) / 65536.0;
+                vc.vol = g->bus.reg[b + 3] / 256.0f;
+                vc.pan = g->bus.reg[b + 4] / 256.0f;
+                uint32_t lp = g->bus.reg[b + 5];
+                vc.loop = lp != 0;
+                vc.loop_start = lp ? int(lp - 1) : 0;
+                vc.attack = 16; vc.decay = 1; vc.sustain = 1.0f; vc.release = 512;
+                vc.keyOn();
+            }
+        } else if (vc.active) {
+            // live tweaks (vibrato/fades) without retrigger
+            uint32_t rate = g->bus.reg[b + 2];
+            if (rate) vc.rate = rate / 65536.0;
+            vc.vol = g->bus.reg[b + 3] / 256.0f;
+        }
+        if (off & (1u << v)) vc.keyOff();
+    }
+    g->bus.reg[0x1F0 / 4] = 0;
+    g->bus.reg[0x1F4 / 4] = 0;
+}
+
 void run_frame() {
     if (!g) return;
     g->bus.rendered = false;
     // step until the cart signals a frame (RENDER), it halts, or a safety cap.
     for (int i = 0; i < 4000000 && !g->bus.rendered && !g->cpu.halted; i++) g->cpu.step();
+    apply_audio_regs();
 }
 
 const uint8_t* video_rgb(int* w, int* h) {
@@ -62,7 +100,9 @@ size_t audio_read(int16_t* out, size_t max_frames) {
 int sample_rate() { return Audio::SR; }
 
 void set_input(int port, uint32_t buttons) {
-    if (g && port == 0) g->bus.input = buttons;
+    if (!g) return;
+    if (port == 0) g->bus.input = buttons;
+    else if (port == 1) g->bus.input2 = buttons;   // 2-player carts (MMIO 0x1C)
 }
 
 // State = CPU regs + CPSR + the MMIO register file + main RAM.
