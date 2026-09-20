@@ -688,6 +688,7 @@ inline bool SnesSystem::state_save(uint8_t* buf, size_t len) {
 }
 
 inline bool SnesSystem::state_load(const uint8_t* buf, size_t len) {
+    if (!buf || len < state_size()) return false;
     famemu::nes::StateReader r{buf, len};
     uint32_t magic = 0;
     r.io(magic);

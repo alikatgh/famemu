@@ -54,6 +54,27 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "cpu diverged: %04X vs %04X\n", sys.cpu().pc, pc_a);
         return 1;
     }
+    // Loading valid data must preserve all serialized DSP counters, not just
+    // the visible frame. Reject truncated data before mutating the live core.
+    if (!sys.state_load(snap.data(), snap.size())) return 1;
+    std::vector<uint8_t> restored(sys.state_size());
+    if (!sys.state_save(restored.data(), restored.size()) || restored != snap) {
+        std::fprintf(stderr, "valid state changed during restore\n"); return 1;
+    }
+    if (sys.state_load(snap.data(), snap.size() / 2)) return 1;
+    if (!sys.state_save(restored.data(), restored.size()) || restored != snap) {
+        std::fprintf(stderr, "truncated state mutated the core\n"); return 1;
+    }
+    // Reproduce the app's corruption pattern that previously restored an
+    // out-of-range DSP sample_pos and crashed in voice_sample.
+    for (size_t seed = 0; seed < 8; ++seed) {
+        auto corrupt = snap;
+        for (size_t i = 8 + seed; i < corrupt.size(); i += 11) corrupt[i] ^= 0xA5;
+        if (sys.state_load(corrupt.data(), corrupt.size())) {
+            for (int frame = 0; frame < 8; ++frame) sys.run_frame();
+        }
+    }
+    if (!sys.state_load(snap.data(), snap.size())) return 1;
     std::printf("snes state round-trip: %zu-byte snapshot, replay bit-identical — PASS\n",
                 snap.size());
     return 0;

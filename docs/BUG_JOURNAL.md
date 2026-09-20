@@ -302,3 +302,8 @@ Fix: `nes_signal.hpp:58` — short-circuit: exact RGB `(0,0,0)` returns `0x0F` d
 4. Commit the fix + the journal entry **together**. Same SHA.
 
 Skip step 2 and the journal decays. Don't.
+
+### 2026-09-20 — Ember 16 corrupted state crashes in DSP voice_sample
+- Reproduced with the app's existing `testSNESCorruptSaveStateNeverCrash` and original Rocket Rush SNES fixture; previously hidden by machine-specific test paths.
+- Saved DSP sample/FIR indexes and pitch accumulators were restored without bounds; `decoded[sample_pos]` crashed.
+- Bound restored DSP indexes/envelope/phase and reject short system states before mutation. Verify with the same app regression test.

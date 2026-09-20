@@ -24,7 +24,7 @@ public:
         std::memset(fir_ring_, 0, sizeof fir_ring_);
         fir_idx_ = 0;
         noise_lfsr_ = 0x4000;
-        noise_counter_ = 0;
+        if (noise_counter_ < 0 || noise_counter_ > 2048) noise_counter_ = 0;
         std::memset(voice_out_, 0, sizeof voice_out_);
     }
 
@@ -38,7 +38,23 @@ public:
         s.io(regs_); s.io(voices_); s.io(echo_pos_); s.io(fir_ring_); s.io(fir_idx_);
         s.io(noise_lfsr_); s.io(noise_counter_); s.io(voice_out_);
     }
-    void post_load() { rd_ = wr_ = 0; }
+    void post_load() {
+        rd_ = wr_ = 0;
+        // StateReader bounds byte reads, not the values restored into indexes.
+        fir_idx_ &= 7;
+        echo_pos_ &= 0x7FFC;
+        if (noise_counter_ < 0 || noise_counter_ > 2048) noise_counter_ = 0;
+        for (auto& voice : voices_) {
+            voice.sample_pos &= 15;
+            voice.frac &= 0xFFF;
+            voice.env = voice.env < 0 ? 0 : (voice.env > 0x7FF ? 0x7FF : voice.env);
+            if (voice.env_counter < 0 || voice.env_counter > 2048) voice.env_counter = 0;
+            if (voice.phase < Voice::Off || voice.phase > Voice::Release) {
+                voice.phase = Voice::Off;
+                voice.active = false;
+            }
+        }
+    }
 
     size_t read_samples(int16_t* out, size_t max_frames) {
         size_t n = 0;
