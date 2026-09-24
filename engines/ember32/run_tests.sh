@@ -9,6 +9,7 @@
 #   audio_dsp_test — IMA ADPCM / echo-reverb / streamed channels
 #   thumb_test     — Thumb ISA + ARM<->Thumb interworking
 #   facade_test    — the FamemuCoreAPI C ABI facade
+#   bus_bounds_test — high-address reads/writes never wrap into RAM
 #   make_cart + cart_file_test — a real .e32 file loaded through the facade
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -23,6 +24,7 @@ run fastcore_test
 run exception_test
 run audio_dsp_test
 run thumb_test
+run bus_bounds_test
 run facade_test famemu_ember32_core.cpp
 
 echo "== make_cart + cart_file_test =="
